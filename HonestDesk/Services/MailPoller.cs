@@ -95,7 +95,8 @@ public sealed class MailPoller
 
         var candidateUids = recentUids
             .OrderBy(uid => uid.Number)
-            .Where(uid => alwaysRecheck.Contains(uid.Value) || ShouldFetch(state, known, BuildKnownUid(folder, uid.Value), uid.Value))
+            .Where(uid => ShouldFetch(state, known, BuildKnownUid(folder, uid.Value), uid.Value)
+                || (alwaysRecheck.Contains(uid.Value) && HasStoredRequest(state, BuildKnownUid(folder, uid.Value), uid.Value)))
             .ToList();
 
         var changedRequests = new List<HelpRequest>();
@@ -175,12 +176,14 @@ public sealed class MailPoller
             return IsIncomplete(existing);
         }
 
-        if (known.Contains(scopedUid) || known.Contains(legacyUid))
-        {
-            return state.Requests.Count == 0;
-        }
+        return !known.Contains(scopedUid) && !known.Contains(legacyUid);
+    }
 
-        return true;
+    private static bool HasStoredRequest(AppState state, string scopedUid, string legacyUid)
+    {
+        return state.Requests.Any(x =>
+            x.Uid.Equals(scopedUid, StringComparison.OrdinalIgnoreCase)
+            || x.Uid.Equals(legacyUid, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsIncomplete(HelpRequest request)
@@ -232,11 +235,3 @@ public sealed class MailPoller
 
     private sealed record MailUid(string Value, long Number);
 }
-
-
-
-
-
-
-
-
