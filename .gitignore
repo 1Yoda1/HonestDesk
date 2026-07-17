@@ -1,0 +1,11 @@
+﻿.vs/
+**/bin/
+**/obj/
+build-check/
+*.user
+*.suo
+
+# HonestDesk stores settings, DPAPI-protected credentials, state and logs in AppData.
+settings.json
+state.json
+honestdesk.log
