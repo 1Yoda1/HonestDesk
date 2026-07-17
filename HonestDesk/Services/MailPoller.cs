@@ -199,7 +199,9 @@ public sealed class MailPoller
         if (existingIndex >= 0)
         {
             var existing = state.Requests[existingIndex];
-            if (!IsIncomplete(existing))
+            var hasNewAddress = string.IsNullOrWhiteSpace(existing.Address)
+                && !string.IsNullOrWhiteSpace(request.Address);
+            if (!IsIncomplete(existing) && !hasNewAddress)
             {
                 return false;
             }
@@ -230,6 +232,8 @@ public sealed class MailPoller
 
     private sealed record MailUid(string Value, long Number);
 }
+
+
 
 
 

@@ -101,6 +101,7 @@ public static partial class HelpRequestParser
         SetIfPresent(fields, "InnMasked", value => request.InnMasked = value);
         SetIfPresent(fields, "Address", value => request.Address = value);
         SetIfPresent(fields, "ClientAddress", value => request.Address = value);
+        SetIfPresent(fields, "FiscalAddress", value => request.Address = value);
         SetIfPresent(fields, "MachineName", value => request.MachineName = value);
         SetIfPresent(fields, "WindowsUser", value => request.WindowsUser = value);
         SetIfPresent(fields, "RuDesktopId", value => request.RuDesktopId = value);
@@ -124,10 +125,11 @@ public static partial class HelpRequestParser
         }
     }
 
-    [GeneratedRegex(@"^(?<key>ClientName|InnMasked|Address|ClientAddress|MachineName|WindowsUser|RuDesktopId|HonestFlowVersion|ProblemType|Message|CreatedAt)\s*:\s*(?<value>.*)$")]
+    [GeneratedRegex(@"^(?<key>ClientName|InnMasked|Address|ClientAddress|FiscalAddress|MachineName|WindowsUser|RuDesktopId|HonestFlowVersion|ProblemType|Message|CreatedAt)\s*:\s*(?<value>.*)$")]
     private static partial Regex FieldRegex();
 
     [GeneratedRegex(@"```json\s*(?<json>\{[\s\S]*?\})\s*```", RegexOptions.IgnoreCase)]
     private static partial Regex JsonBlockRegex();
 }
+
 
