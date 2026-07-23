@@ -56,15 +56,33 @@ public sealed class RuDesktopService
         }
     }
 
-    public bool ConnectOrCopy(string configuredPath, string ruDesktopId)
+    public RuDesktopConnectResult Connect(string configuredPath, string ruDesktopId, string password)
     {
-        if (!string.IsNullOrWhiteSpace(ruDesktopId))
-        {
-            Clipboard.SetText(ruDesktopId);
-            _logger.Info($"RuDesktop ID copied: {ruDesktopId}");
-        }
+        var exe = FindExecutable(configuredPath);
+        if (string.IsNullOrWhiteSpace(exe))
+            return RuDesktopConnectResult.ExecutableNotFound;
 
-        return Open(configuredPath);
+        string peerId = ruDesktopId?.Trim().Replace(" ", "") ?? "";
+        if (string.IsNullOrWhiteSpace(peerId))
+            return RuDesktopConnectResult.InvalidPeerId;
+        if (string.IsNullOrWhiteSpace(password))
+            return RuDesktopConnectResult.PasswordMissing;
+
+        try
+        {
+            var startInfo = new ProcessStartInfo(exe) { UseShellExecute = true };
+            startInfo.ArgumentList.Add("--connect");
+            startInfo.ArgumentList.Add(peerId);
+            startInfo.ArgumentList.Add(password);
+            Process.Start(startInfo);
+            _logger.Info($"RuDesktop connection started for peer ID {peerId}.");
+            return RuDesktopConnectResult.Started;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"RuDesktop connection start failed for peer ID {peerId}", ex);
+            return RuDesktopConnectResult.StartFailed;
+        }
     }
 
     private static string? FindFromUninstallRegistry()
@@ -109,4 +127,13 @@ public sealed class RuDesktopService
 
         return null;
     }
+}
+
+public enum RuDesktopConnectResult
+{
+    Started,
+    ExecutableNotFound,
+    InvalidPeerId,
+    PasswordMissing,
+    StartFailed
 }

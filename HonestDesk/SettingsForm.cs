@@ -26,6 +26,9 @@ public sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
+        BackColor = AppTheme.Canvas;
+        ForeColor = AppTheme.Text;
+        Font = AppTheme.UiFont();
 
         BuildLayout();
         LoadSettings(settings);
@@ -36,7 +39,8 @@ public sealed class SettingsForm : Form
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12),
+            Padding = new Padding(20),
+            BackColor = AppTheme.Canvas,
             ColumnCount = 3,
             RowCount = 10
         };
@@ -55,6 +59,7 @@ public sealed class SettingsForm : Form
         AddRow(root, 7, "RuDesktop.exe", _ruDesktopPath);
 
         var browse = new Button { Text = "Обзор", Dock = DockStyle.Fill };
+        AppTheme.StyleSecondaryButton(browse);
         browse.Click += (_, _) => BrowseRuDesktop();
         root.Controls.Add(browse, 2, 7);
 
@@ -63,6 +68,8 @@ public sealed class SettingsForm : Form
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var save = new Button { Text = "Сохранить", DialogResult = DialogResult.OK, Width = 110 };
         var cancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Width = 90 };
+        AppTheme.StylePrimaryButton(save);
+        AppTheme.StyleSecondaryButton(cancel);
         save.Click += (_, _) => SaveSettings();
         buttons.Controls.Add(save);
         buttons.Controls.Add(cancel);
@@ -77,6 +84,7 @@ public sealed class SettingsForm : Form
     private static void AddRow(TableLayoutPanel root, int row, string label, Control control)
     {
         control.Dock = DockStyle.Fill;
+        AppTheme.StyleInput(control);
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         root.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
         root.Controls.Add(control, 1, row);
