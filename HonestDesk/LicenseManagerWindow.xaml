@@ -1,0 +1,154 @@
+<Window x:Class="HonestDesk.LicenseManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="HonestDesk · Лицензии" Width="1280" Height="820"
+        MinWidth="1080" MinHeight="700" WindowStartupLocation="CenterOwner">
+    <Grid Background="#F4F6FB">
+        <Grid.RowDefinitions><RowDefinition Height="76"/><RowDefinition Height="*"/><RowDefinition Height="68"/></Grid.RowDefinitions>
+        <Border Background="#10182B" Padding="28,0">
+            <Grid>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Лицензии HonestFlow" Foreground="White" FontSize="23" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="StatusText" Text="Новый манифест" Foreground="#8F9BBC" Margin="0,4,0,0"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Style="{StaticResource GhostButton}" Content="Новый" Click="NewButton_Click" Margin="0,0,8,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="Открыть файл" Click="OpenButton_Click" Margin="0,0,8,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="Загрузить опубликованный" Click="LoadPublishedButton_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="24,20">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="310"/><ColumnDefinition Width="18"/><ColumnDefinition/></Grid.ColumnDefinitions>
+            <Border Style="{StaticResource Card}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="62"/><RowDefinition Height="*"/><RowDefinition Height="108"/></Grid.RowDefinitions>
+                    <Grid Margin="18,0">
+                        <TextBlock Text="Лицензии клиентов" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="ClientCountText" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                   Foreground="{StaticResource Muted}"/>
+                    </Grid>
+                    <DataGrid x:Name="LicensesGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True"
+                              BorderThickness="0" HeadersVisibility="Column" SelectionChanged="LicensesGrid_SelectionChanged">
+                        <DataGrid.Columns>
+                            <DataGridCheckBoxColumn Header="ВКЛ" Binding="{Binding Enabled}" Width="48"/>
+                            <DataGridTextColumn Header="ИП" Binding="{Binding DisplayName}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel Grid.Row="2" Margin="14,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <Button Style="{StaticResource SoftButton}" Content="+ Добавить" Click="AddLicenseButton_Click"/>
+                            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Удалить" Click="DeleteLicenseButton_Click"/>
+                        </Grid>
+                        <Button Style="{StaticResource SoftButton}" Content="Добавить отсутствующих клиентов"
+                                Click="AddMissingButton_Click" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <Grid>
+                                <StackPanel>
+                                    <TextBlock Text="Лицензия клиента" FontSize="17" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Функции и устройства выбранного клиента"
+                                               Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <Button Style="{StaticResource PrimaryButton}" Content="Применить изменения"
+                                        HorizontalAlignment="Right" Click="ApplyLicenseButton_Click"/>
+                            </Grid>
+                            <Grid Margin="0,18,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                <StackPanel><TextBlock Text="ИП" FontSize="9" Foreground="{StaticResource Muted}"/><ComboBox x:Name="LicenseClientIdBox" Margin="0,5,0,0"/></StackPanel>
+                                <StackPanel Grid.Column="2"><TextBlock Text="МИНИМАЛЬНАЯ ВЕРСИЯ HONESTFLOW" FontSize="9" Foreground="{StaticResource Muted}"/><TextBox x:Name="MinVersionBox" Margin="0,5,0,0"/></StackPanel>
+                                <StackPanel Grid.Column="4"><TextBlock Text="ОФЛАЙН-ПЕРИОД, ЧАСОВ" FontSize="9" Foreground="{StaticResource Muted}"/><TextBox x:Name="GraceHoursBox" Margin="0,5,0,0"/></StackPanel>
+                            </Grid>
+                            <WrapPanel Margin="0,16,0,0">
+                                <CheckBox x:Name="LicenseEnabledCheck" Content="Лицензия включена" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="ViewPointStatusCheck" Content="Просмотр состояния точки" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="CollectDiagnosticsCheck" Content="Сбор диагностики" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="SendDiagnosticsCheck" Content="Отправка диагностики" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="RequestHelpCheck" Content="Запрос помощи" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="InstallComponentsCheck" Content="Установка компонентов" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="ReinstallComponentsCheck" Content="Переустановка компонентов" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="RestoreLmDatabaseCheck" Content="Восстановление базы ЛМ ЧЗ" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="ManageServicesCheck" Content="Управление службами" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="RecoverLmServicesCheck" Content="Восстановление служб ЛМ ЧЗ" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="InitializeLmCheck" Content="Инициализация ЛМ ЧЗ" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="InstallRuDesktopCheck" Content="Установка RuDesktop" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="ConfigureRuDesktopCheck" Content="Настройка RuDesktop" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="OpenLocalToolsCheck" Content="Локальные инструменты" Margin="0,0,22,10"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="190"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <TextBlock Text="Устройства клиента" FontSize="17" FontWeight="SemiBold"/>
+                            <DataGrid x:Name="DevicesGrid" Grid.Row="1" AutoGenerateColumns="False" Margin="0,14,0,10"
+                                      CanUserAddRows="False" HeadersVisibility="Column">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="DEVICE ID" Binding="{Binding DeviceId}" Width="1.2*"/>
+                                    <DataGridTextColumn Header="НАЗВАНИЕ" Binding="{Binding Name}" Width="*"/>
+                                    <DataGridTextColumn Header="АДРЕС ТОЧКИ" Binding="{Binding Address}" Width="1.3*"/>
+                                    <DataGridCheckBoxColumn Header="ВКЛ" Binding="{Binding Enabled}" Width="48"/>
+                                    <DataGridTextColumn Header="КОММЕНТАРИЙ" Binding="{Binding Comment}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal">
+                                <Button Style="{StaticResource SoftButton}" Content="+ Устройство" Click="AddDeviceButton_Click" Margin="0,0,8,0"/>
+                                <Button Style="{StaticResource SoftButton}" Content="Удалить устройство" Click="DeleteDeviceButton_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <Grid>
+                                <StackPanel>
+                                    <TextBlock Text="Подпись и публикация" FontSize="17" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Закрытый ключ используется только в момент локальной подписи."
+                                               Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <Button Style="{StaticResource SoftButton}" Content="Операторские устройства"
+                                        HorizontalAlignment="Right" Click="OperatorDevicesButton_Click"/>
+                            </Grid>
+                            <Grid Margin="0,16,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition Width="90"/></Grid.ColumnDefinitions>
+                                <TextBox x:Name="PrivateKeyBox" ToolTip="Путь к закрытому ключу"/>
+                                <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Обзор" Click="PrivateKeyBrowse_Click" Padding="8"/>
+                            </Grid>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition Width="90"/></Grid.ColumnDefinitions>
+                                <TextBox x:Name="PublicKeyBox" ToolTip="Путь к публичному ключу"/>
+                                <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Обзор" Click="PublicKeyBrowse_Click" Padding="8"/>
+                            </Grid>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                <StackPanel><TextBlock Text="KEY ID" FontSize="9" Foreground="{StaticResource Muted}"/><TextBox x:Name="KeyIdBox" Margin="0,5,0,0"/></StackPanel>
+                                <StackPanel Grid.Column="2"><TextBlock Text="СРОК, ДНЕЙ" FontSize="9" Foreground="{StaticResource Muted}"/><TextBox x:Name="ValidityDaysBox" Margin="0,5,0,0"/></StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="#E8ECF4" BorderThickness="0,1,0,0" Padding="24,10">
+            <Grid>
+                <TextBlock x:Name="RevisionText" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Style="{StaticResource SoftButton}" Content="Сохранить и подписать"
+                            Click="SaveSignedButton_Click" Margin="0,0,10,0"/>
+                    <Button x:Name="PublishButton" Style="{StaticResource PrimaryButton}" Content="Опубликовать"
+                            Click="PublishButton_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

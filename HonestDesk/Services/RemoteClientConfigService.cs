@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Text;
 using System.Text.Json;
+using HonestFlow.Config.Core;
 
 namespace HonestDesk.Services;
 
@@ -13,7 +14,7 @@ public sealed class RemoteClientConfigService
     private readonly AppLogger _logger;
     private readonly HttpClient _httpClient;
     private readonly SemaphoreSlim _loadLock = new(1, 1);
-    private IReadOnlyList<RemoteClientConfig>? _cachedClients;
+    private IReadOnlyList<ClientConfiguration>? _cachedClients;
     private DateTimeOffset _cachedAtUtc;
 
     public RemoteClientConfigService(AppLogger logger, HttpMessageHandler? handler = null)
@@ -33,17 +34,11 @@ public sealed class RemoteClientConfigService
 
         try
         {
-            IReadOnlyList<RemoteClientConfig> clients = await GetClientsAsync(cancellationToken);
-            var matches = clients
-                .Where(client => string.Equals(client.Name?.Trim(), clientName.Trim(), StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            ClientMatchResult match = await FindClientAsync("", clientName, "", cancellationToken);
+            if (!match.Success)
+                return ClientPasswordResult.Failed(match.Error);
 
-            if (matches.Count == 0)
-                return ClientPasswordResult.Failed($"Клиент «{clientName}» не найден в ips_encrypted.json.");
-            if (matches.Count > 1)
-                return ClientPasswordResult.Failed($"В ips_encrypted.json найдено несколько клиентов с именем «{clientName}».");
-
-            string password = matches[0].RuDesktop?.Password?.Trim() ?? "";
+            string password = match.Client!.RuDesktop.Password?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(password))
                 return ClientPasswordResult.Failed($"Для клиента «{clientName}» не задан пароль RuDesktop.");
 
@@ -61,7 +56,25 @@ public sealed class RemoteClientConfigService
         }
     }
 
-    private async Task<IReadOnlyList<RemoteClientConfig>> GetClientsAsync(CancellationToken cancellationToken)
+    public async Task<ClientMatchResult> FindClientAsync(
+        string? clientId,
+        string? clientName,
+        string? inn,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            IReadOnlyList<ClientConfiguration> clients = await GetClientsAsync(cancellationToken);
+            return ClientConfigurationReader.Match(clients, clientId, clientName, inn);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to load client profile", ex);
+            return new ClientMatchResult(null, "", "Не удалось загрузить карточку клиента: " + ex.Message);
+        }
+    }
+
+    private async Task<IReadOnlyList<ClientConfiguration>> GetClientsAsync(CancellationToken cancellationToken)
     {
         if (_cachedClients is not null && DateTimeOffset.UtcNow - _cachedAtUtc < CacheLifetime)
             return _cachedClients;
@@ -74,7 +87,7 @@ public sealed class RemoteClientConfigService
 
             try
             {
-                IReadOnlyList<RemoteClientConfig> clients = await LoadRemoteAsync(cancellationToken);
+                IReadOnlyList<ClientConfiguration> clients = await LoadRemoteAsync(cancellationToken);
                 _cachedClients = clients;
                 _cachedAtUtc = DateTimeOffset.UtcNow;
                 _logger.Info($"Remote client configuration loaded. Clients: {clients.Count}.");
@@ -92,7 +105,7 @@ public sealed class RemoteClientConfigService
         }
     }
 
-    private async Task<IReadOnlyList<RemoteClientConfig>> LoadRemoteAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<ClientConfiguration>> LoadRemoteAsync(CancellationToken cancellationToken)
     {
         string apiUrl = DownloadApi
             + "?public_key=" + Uri.EscapeDataString(PublicKey)
@@ -111,11 +124,7 @@ public sealed class RemoteClientConfigService
         using HttpResponseMessage configResponse = await _httpClient.GetAsync(hrefElement.GetString(), cancellationToken);
         configResponse.EnsureSuccessStatusCode();
         string encrypted = await ReadLimitedTextAsync(configResponse, cancellationToken);
-        string json = Deobfuscate(encrypted.Trim());
-        return JsonSerializer.Deserialize<List<RemoteClientConfig>>(
-                   json,
-                   new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-               ?? new List<RemoteClientConfig>();
+        return ClientConfigurationReader.ReadLegacyObfuscated(encrypted);
     }
 
     private static async Task<string> ReadLimitedTextAsync(
@@ -143,24 +152,6 @@ public sealed class RemoteClientConfigService
         return Encoding.UTF8.GetString(memory.ToArray());
     }
 
-    private static string Deobfuscate(string encrypted)
-    {
-        byte[] bytes = Convert.FromBase64String(encrypted);
-        for (int index = 0; index < bytes.Length; index++)
-            bytes[index] ^= 0xAA;
-        return Encoding.UTF8.GetString(bytes);
-    }
-
-    private sealed class RemoteClientConfig
-    {
-        public string Name { get; set; } = "";
-        public RemoteRuDesktopConfig? RuDesktop { get; set; }
-    }
-
-    private sealed class RemoteRuDesktopConfig
-    {
-        public string Password { get; set; } = "";
-    }
 }
 
 public sealed class ClientPasswordResult

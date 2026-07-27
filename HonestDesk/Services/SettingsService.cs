@@ -37,7 +37,7 @@ public sealed class SettingsService
 
         if (enabled)
         {
-            key.SetValue("HonestDesk", Application.ExecutablePath);
+            key.SetValue("HonestDesk", Environment.ProcessPath ?? AppContext.BaseDirectory);
         }
         else
         {

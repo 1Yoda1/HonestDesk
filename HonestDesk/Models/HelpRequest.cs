@@ -1,4 +1,4 @@
-﻿namespace HonestDesk.Models;
+namespace HonestDesk.Models;
 
 public sealed class HelpRequest
 {
@@ -6,6 +6,7 @@ public sealed class HelpRequest
     public string MessageId { get; set; } = "";
     public string Subject { get; set; } = "";
     public string ClientName { get; set; } = "";
+    public string ClientId { get; set; } = "";
     public string InnMasked { get; set; } = "";
     public string Address { get; set; } = "";
     public string MachineName { get; set; } = "";
@@ -19,5 +20,3 @@ public sealed class HelpRequest
 
     public string DisplayTitle => string.IsNullOrWhiteSpace(ClientName) ? Subject : ClientName;
 }
-
-

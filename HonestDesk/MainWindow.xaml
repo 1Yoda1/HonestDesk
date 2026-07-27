@@ -1,0 +1,237 @@
+<Window x:Class="HonestDesk.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="HonestDesk" Width="1440" Height="860" MinWidth="1120" MinHeight="700"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="250"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="#10182B">
+            <Grid Margin="24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="36"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Orientation="Horizontal">
+                    <Border Width="44" Height="44" CornerRadius="13">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#7280FF"/>
+                                <GradientStop Color="#995CF6" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <TextBlock Text="H" Foreground="White" FontSize="22" FontWeight="Bold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Margin="12,1,0,0">
+                        <TextBlock Text="HonestDesk" Foreground="White" FontSize="20" FontWeight="SemiBold"/>
+                        <TextBlock Text="support cockpit" Foreground="#7F8AAA" FontSize="11"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Row="2">
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="DashboardButton_Click" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⌂" FontSize="18" Width="30"/>
+                            <TextBlock Text="Заявки" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="SettingsButton_Click" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚙" FontSize="17" Width="30"/>
+                            <TextBlock Text="Настройки" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="OpenRuDesktopButton_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="↗" FontSize="18" Width="30"/>
+                            <TextBlock Text="RuDesktop" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="OpenConfigEditorButton_Click" Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="◆" FontSize="15" Width="30"/>
+                            <TextBlock Text="Администрирование" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <Border Grid.Row="4" Background="#18233D" CornerRadius="16" Padding="16">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="SideStatusDot" Width="8" Height="8" Fill="#48D39C" Margin="0,1,8,0"/>
+                            <TextBlock Text="HONESTFLOW" Foreground="#8F9BBC" FontSize="10" FontWeight="Bold"/>
+                        </StackPanel>
+                        <TextBlock x:Name="SideStatusText" Text="Система готова" Foreground="White"
+                                   FontSize="13" FontWeight="SemiBold" Margin="0,9,0,3"/>
+                        <TextBlock x:Name="SideLastCheckText" Text="Ожидаем проверку" Foreground="#7F8AAA"
+                                   FontSize="11" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="34,28,34,30">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="22"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="22"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="22"/>
+                <RowDefinition Height="270"/>
+            </Grid.RowDefinitions>
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Центр поддержки" FontSize="29" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                    <TextBlock Text="Все обращения HonestFlow — спокойно, быстро, в одном месте"
+                               Foreground="{StaticResource Muted}" FontSize="13" Margin="0,5,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource SoftButton}" Content="Настройки" Click="SettingsButton_Click"
+                            Margin="0,0,10,0"/>
+                    <Button x:Name="CheckButton" Style="{StaticResource PrimaryButton}"
+                            Content="Обновить заявки" Click="CheckButton_Click"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <Border Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="ВСЕ ЗАЯВКИ" Foreground="{StaticResource Muted}" FontSize="10" FontWeight="Bold"/>
+                            <TextBlock x:Name="TotalCountText" Text="0" FontSize="27" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <Border Grid.Column="1" Width="42" Height="42" Background="#EEF0FF" CornerRadius="12">
+                            <TextBlock Text="▤" Foreground="#5865F2" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                </Border>
+                <Border Grid.Column="2" Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="В РАБОТЕ" Foreground="{StaticResource Muted}" FontSize="10" FontWeight="Bold"/>
+                            <TextBlock x:Name="OpenCountText" Text="0" FontSize="27" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <Border Grid.Column="1" Width="42" Height="42" Background="#FFF3E5" CornerRadius="12">
+                            <TextBlock Text="◷" Foreground="#E59738" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                </Border>
+                <Border Grid.Column="4" Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="ОБРАБОТАНО" Foreground="{StaticResource Muted}" FontSize="10" FontWeight="Bold"/>
+                            <TextBlock x:Name="HandledCountText" Text="0" FontSize="27" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <Border Grid.Column="1" Width="42" Height="42" Background="#E7FAF3" CornerRadius="12">
+                            <TextBlock Text="✓" Foreground="#28A978" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Border Grid.Row="4" Style="{StaticResource Card}" Padding="0">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="56"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid Margin="20,0">
+                        <TextBlock Text="Последние обращения" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="EmptyHint" Text="Новых заявок пока нет" Foreground="{StaticResource Muted}"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                    </Grid>
+                    <DataGrid x:Name="RequestsGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0"
+                              RowHeaderWidth="0" SelectionMode="Single" SelectionUnit="FullRow"
+                              Background="White" HorizontalGridLinesBrush="#EEF1F6"
+                              RowBackground="White" AlternatingRowBackground="#FAFBFD"
+                              SelectionChanged="RequestsGrid_SelectionChanged"
+                              MouseDoubleClick="RequestsGrid_MouseDoubleClick">
+                        <DataGrid.Resources>
+                            <Style TargetType="DataGridColumnHeader">
+                                <Setter Property="Background" Value="#F8F9FC"/>
+                                <Setter Property="Foreground" Value="#75809A"/>
+                                <Setter Property="FontSize" Value="10"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                <Setter Property="Padding" Value="14,10"/>
+                                <Setter Property="BorderThickness" Value="0,1,0,1"/>
+                                <Setter Property="BorderBrush" Value="#E8ECF4"/>
+                            </Style>
+                            <Style TargetType="DataGridCell">
+                                <Setter Property="Padding" Value="13,10"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                            </Style>
+                            <Style TargetType="DataGridRow">
+                                <Setter Property="MinHeight" Value="44"/>
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="ВРЕМЯ" Binding="{Binding CreatedAt, StringFormat={}{0:dd.MM HH:mm}}" Width="110"/>
+                            <DataGridTextColumn Header="КЛИЕНТ" Binding="{Binding ClientName}" Width="1.3*"/>
+                            <DataGridTextColumn Header="КОМПЬЮТЕР" Binding="{Binding MachineName}" Width="*"/>
+                            <DataGridTextColumn Header="RUDESKTOP ID" Binding="{Binding RuDesktopId}" Width="125"/>
+                            <DataGridTextColumn Header="ПРОБЛЕМА" Binding="{Binding ProblemType}" Width="1.5*"/>
+                            <DataGridCheckBoxColumn Header="ГОТОВО" Binding="{Binding IsHandled}" Width="75"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="6">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="22"/><ColumnDefinition Width="285"/></Grid.ColumnDefinitions>
+                <Border Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <TextBlock Text="Детали заявки" FontSize="15" FontWeight="SemiBold"/>
+                        <ScrollViewer Grid.Row="1" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
+                            <TextBlock x:Name="DetailsText" Text="Выберите заявку, чтобы увидеть подробности"
+                                       Foreground="{StaticResource Muted}" TextWrapping="Wrap" LineHeight="21"/>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+                <Border Grid.Column="2" Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Быстрые действия" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                        <Button Style="{StaticResource SoftButton}" Content="Карточка клиента"
+                                Click="ClientProfileButton_Click" Margin="0,0,0,6" Padding="14,9"/>
+                        <Button Style="{StaticResource PrimaryButton}" Content="Подключиться" Click="ConnectButton_Click"
+                                Margin="0,0,0,6" Padding="14,9"/>
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <Button Style="{StaticResource SoftButton}" Content="Копировать ID" Padding="8,10" Click="CopyIdButton_Click"/>
+                            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Письмо" Padding="8,10" Click="MailButton_Click"/>
+                        </Grid>
+                        <Button Style="{StaticResource SoftButton}" Content="Пометить обработанной"
+                                Click="MarkHandledButton_Click" Padding="14,9"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

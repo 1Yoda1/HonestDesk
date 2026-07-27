@@ -1,0 +1,100 @@
+<Window x:Class="HonestDesk.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Настройки HonestDesk" Width="690" Height="700" MinHeight="620"
+        ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Grid Background="#F4F6FB">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+
+        <Border Background="#10182B" Padding="28,24">
+            <Grid>
+                <StackPanel>
+                    <TextBlock Text="Настройки" Foreground="White" FontSize="25" FontWeight="SemiBold"/>
+                    <TextBlock Text="Почта, синхронизация и удалённый доступ" Foreground="#8F9BBC" Margin="0,5,0,0"/>
+                </StackPanel>
+                <Border HorizontalAlignment="Right" Width="44" Height="44" CornerRadius="13">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#7280FF"/><GradientStop Color="#995CF6" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <TextBlock Text="⚙" Foreground="White" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="28,24">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,18">
+                    <StackPanel>
+                        <TextBlock Text="Почтовый ящик" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="HonestDesk читает только выделенную папку заявок."
+                                   Foreground="{StaticResource Muted}" FontSize="12" Margin="0,3,0,18"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition Width="140"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="14"/>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="14"/>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="14"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="IMAP-сервер" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                <TextBox x:Name="ServerBox"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Порт" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                <TextBox x:Name="PortBox"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.ColumnSpan="3">
+                                <TextBlock Text="Email" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                <TextBox x:Name="EmailBox"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="4" Grid.ColumnSpan="3">
+                                <TextBlock Text="Пароль приложения" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                <PasswordBox x:Name="PasswordBox"/>
+                            </StackPanel>
+                            <Grid Grid.Row="6" Grid.ColumnSpan="3">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Папка заявок" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                    <TextBox x:Name="FolderBox"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="Интервал проверки, сек." FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                    <TextBox x:Name="IntervalBox"/>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                        <CheckBox x:Name="SslCheck" Content="Использовать защищённое SSL-соединение"
+                                  Margin="0,18,0,0" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Рабочее место" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="Путь к клиенту удалённой поддержки и запуск системы."
+                                   Foreground="{StaticResource Muted}" FontSize="12" Margin="0,3,0,18"/>
+                        <TextBlock Text="RuDesktop.exe" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition Width="96"/></Grid.ColumnDefinitions>
+                            <TextBox x:Name="RuDesktopBox"/>
+                            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Обзор" Click="BrowseButton_Click" Padding="10,9"/>
+                        </Grid>
+                        <CheckBox x:Name="StartupCheck" Content="Запускать HonestDesk вместе с Windows"
+                                  Margin="0,18,0,0" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="#E8ECF4" BorderThickness="0,1,0,0" Padding="28,16">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Style="{StaticResource SoftButton}" Content="Отмена" Click="CancelButton_Click" Margin="0,0,10,0"/>
+                <Button Style="{StaticResource PrimaryButton}" Content="Сохранить настройки" Click="SaveButton_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
