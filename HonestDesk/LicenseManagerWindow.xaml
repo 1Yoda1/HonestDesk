@@ -69,19 +69,8 @@
                             </Grid>
                             <WrapPanel Margin="0,16,0,0">
                                 <CheckBox x:Name="LicenseEnabledCheck" Content="Лицензия включена" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="ViewPointStatusCheck" Content="Просмотр состояния точки" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="CollectDiagnosticsCheck" Content="Сбор диагностики" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="SendDiagnosticsCheck" Content="Отправка диагностики" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="RequestHelpCheck" Content="Запрос помощи" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="InstallComponentsCheck" Content="Установка компонентов" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="ReinstallComponentsCheck" Content="Переустановка компонентов" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="RestoreLmDatabaseCheck" Content="Восстановление базы ЛМ ЧЗ" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="ManageServicesCheck" Content="Управление службами" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="RecoverLmServicesCheck" Content="Восстановление служб ЛМ ЧЗ" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="InitializeLmCheck" Content="Инициализация ЛМ ЧЗ" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="InstallRuDesktopCheck" Content="Установка RuDesktop" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="ConfigureRuDesktopCheck" Content="Настройка RuDesktop" Margin="0,0,22,10"/>
-                                <CheckBox x:Name="OpenLocalToolsCheck" Content="Локальные инструменты" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="ViewAndRepairCheck" Content="Просмотр и ремонт точки" Margin="0,0,22,10"/>
+                                <CheckBox x:Name="InstallAndMaintenanceCheck" Content="Установка и обслуживание" Margin="0,0,22,10"/>
                             </WrapPanel>
                         </StackPanel>
                     </Border>
@@ -115,8 +104,13 @@
                                     <TextBlock Text="Закрытый ключ используется только в момент локальной подписи."
                                                Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
                                 </StackPanel>
-                                <Button Style="{StaticResource SoftButton}" Content="Операторские устройства"
-                                        HorizontalAlignment="Right" Click="OperatorDevicesButton_Click"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button x:Name="ImportRegistrationRequestsButton" Style="{StaticResource SoftButton}"
+                                            Content="Импорт заявок" Click="ImportRegistrationRequestsButton_Click"
+                                            Margin="0,0,8,0"/>
+                                    <Button Style="{StaticResource SoftButton}" Content="Операторские устройства"
+                                            Click="OperatorDevicesButton_Click"/>
+                                </StackPanel>
                             </Grid>
                             <Grid Margin="0,16,0,0">
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition Width="90"/></Grid.ColumnDefinitions>

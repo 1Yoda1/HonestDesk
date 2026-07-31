@@ -1,5 +1,5 @@
 using System.Windows;
-using HonestFlowConfigEditor.Infrastructure;
+using HonestDesk.Infrastructure;
 
 namespace HonestDesk;
 
@@ -8,7 +8,9 @@ public partial class DiskCredentialsWindow : Window
     public DiskCredentialsWindow()
     {
         InitializeComponent();
-        LoginBox.Text = YandexDiskSettings.GetCredentials().Login;
+        YandexDiskCredentials credentials = YandexDiskSettings.GetCredentials();
+        LoginBox.Text = credentials.Login;
+        PasswordBox.Password = credentials.AppPassword;
     }
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -20,7 +22,7 @@ public partial class DiskCredentialsWindow : Window
                 Login = LoginBox.Text,
                 AppPassword = PasswordBox.Password
             });
-            PasswordBox.Clear();
+            ErrorText.Text = "";
             DialogResult = true;
         }
         catch (Exception ex) { ErrorText.Text = ex.Message; }

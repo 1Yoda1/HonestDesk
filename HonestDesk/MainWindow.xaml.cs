@@ -5,7 +5,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using HonestFlow.Config.Core;
 using HonestDesk.Models;
 using HonestDesk.Services;
 using Forms = System.Windows.Forms;
@@ -342,7 +341,7 @@ public partial class MainWindow : Window
         }
 
         _adminAccess.Audit("WPF admin editor opened");
-        var editor = new AdminEditorWindow(_adminAccess, _adminSessionUntilUtc) { Owner = this };
+        var editor = new AdminEditorWindow(_adminAccess, _adminSessionUntilUtc, _settings) { Owner = this };
         editor.ShowDialog();
     }
 

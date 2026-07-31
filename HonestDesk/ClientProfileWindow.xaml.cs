@@ -1,5 +1,5 @@
 using System.Windows;
-using HonestFlow.Config.Core;
+using HonestDesk.Models;
 
 namespace HonestDesk;
 

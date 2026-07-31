@@ -4,9 +4,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Threading;
+using HonestDesk.Models;
 using HonestDesk.Services;
-using HonestFlowConfigEditor.Infrastructure;
-using HonestFlowConfigEditor.Models;
+using HonestDesk.Infrastructure;
 using Newtonsoft.Json;
 
 namespace HonestDesk;
@@ -14,11 +14,13 @@ namespace HonestDesk;
 public partial class AdminEditorWindow : Window
 {
     private readonly AdminAccessService _access;
+    private readonly AppSettings _appSettings;
     private readonly YandexDiskClient _disk = new();
     private readonly ObservableCollection<IPData> _clients = [];
     private readonly ICollectionView _clientsView;
     private VersionsData _versions = new();
     private AvailableVersionsData _availableVersions = new();
+    private SupportMailSettings _supportMailSettings = new();
     private string _originalIpsEncrypted = "";
     private string _originalVersionsJson = "";
     private string _baselineJson = "";
@@ -27,10 +29,11 @@ public partial class AdminEditorWindow : Window
     private readonly DateTimeOffset _sessionUntilUtc;
     private readonly DispatcherTimer _sessionTimer = new() { Interval = TimeSpan.FromSeconds(10) };
 
-    public AdminEditorWindow(AdminAccessService access, DateTimeOffset sessionUntilUtc)
+    public AdminEditorWindow(AdminAccessService access, DateTimeOffset sessionUntilUtc, AppSettings? appSettings = null)
     {
         InitializeComponent();
         _access = access;
+        _appSettings = appSettings ?? new AppSettings();
         _sessionUntilUtc = sessionUntilUtc;
         _clientsView = CollectionViewSource.GetDefaultView(_clients);
         _clientsView.Filter = FilterClient;
@@ -80,6 +83,14 @@ public partial class AdminEditorWindow : Window
                 _versions = new();
                 _originalVersionsJson = JsonConvert.SerializeObject(_versions, Formatting.Indented);
             }
+
+            if (files.TryGetValue("support_mail_encrypted.json", out var supportMailUrl))
+            {
+                string encryptedSupportMail = await _disk.DownloadFileContentAsync(supportMailUrl);
+                string supportMailJson = ConfigManager.Deobfuscate(encryptedSupportMail);
+                _supportMailSettings = JsonConvert.DeserializeObject<SupportMailSettings>(supportMailJson) ?? new();
+            }
+            ApplyRegistrationMailOverride();
 
             LoadVersionFields();
             _baselineJson = Snapshot();
@@ -461,7 +472,22 @@ public partial class AdminEditorWindow : Window
             .Where(x => !string.IsNullOrWhiteSpace(x.ClientId))
             .GroupBy(x => x.ClientId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First().Name ?? x.Key, StringComparer.OrdinalIgnoreCase);
-        new LicenseManagerWindow(clients, _access) { Owner = this }.ShowDialog();
+        new LicenseManagerWindow(clients, _access, _supportMailSettings) { Owner = this }.ShowDialog();
+    }
+
+    private void ApplyRegistrationMailOverride()
+    {
+        string registrationEmail = (_appSettings.RegistrationEmail ?? "").Trim();
+        string registrationPassword = DpapiProtector.Unprotect(_appSettings.ProtectedRegistrationAppPassword);
+
+        if (string.IsNullOrWhiteSpace(registrationEmail) &&
+            string.IsNullOrWhiteSpace(registrationPassword))
+        {
+            return;
+        }
+
+        _supportMailSettings.SenderEmail = registrationEmail;
+        _supportMailSettings.SenderPassword = registrationPassword;
     }
 
     private async void ReloadButton_Click(object sender, RoutedEventArgs e)

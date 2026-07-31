@@ -7,10 +7,10 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\HonestFlow.Config.Core\HonestFlow.Config.Core.csproj" />
     <Reference Include="HonestDesk.AdminRuntime">
       <HintPath>lib\HonestDesk.AdminRuntime.dll</HintPath>
       <Private>true</Private>

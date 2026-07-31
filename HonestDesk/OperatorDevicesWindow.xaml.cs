@@ -1,6 +1,6 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows;
-using HonestFlowConfigEditor.Models.Licensing;
+using HonestDesk.Models.Licensing;
 
 namespace HonestDesk;
 
@@ -29,7 +29,8 @@ public partial class OperatorDevicesWindow : Window
 
     private void DeleteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (DevicesGrid.SelectedItem is OperatorDevice device) _devices.Remove(device);
+        if (DevicesGrid.SelectedItem is OperatorDevice device)
+            _devices.Remove(device);
     }
 
     private void ApplyButton_Click(object sender, RoutedEventArgs e)
@@ -38,11 +39,18 @@ public partial class OperatorDevicesWindow : Window
         if (_devices.Any(x => string.IsNullOrWhiteSpace(x.DeviceId)) ||
             _devices.GroupBy(x => x.DeviceId.Trim(), StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1))
         {
-            System.Windows.MessageBox.Show(this, "DeviceId обязателен и должен быть уникальным.",
-                "Проверьте устройства", MessageBoxButton.OK, MessageBoxImage.Warning);
+            System.Windows.MessageBox.Show(
+                this,
+                "DeviceId обязателен и должен быть уникальным.",
+                "Проверьте устройства",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
             return;
         }
-        foreach (var device in _devices) device.DeviceId = device.DeviceId.Trim();
+
+        foreach (var device in _devices)
+            device.DeviceId = device.DeviceId.Trim();
+
         DialogResult = true;
     }
 

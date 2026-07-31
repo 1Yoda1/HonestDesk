@@ -19,6 +19,8 @@ public partial class SettingsWindow : Window
         EmailBox.Text = settings.Email;
         PasswordBox.Password = DpapiProtector.Unprotect(settings.ProtectedAppPassword);
         FolderBox.Text = settings.MailFolder;
+        RegistrationEmailBox.Text = settings.RegistrationEmail;
+        RegistrationPasswordBox.Password = DpapiProtector.Unprotect(settings.ProtectedRegistrationAppPassword);
         IntervalBox.Text = settings.CheckIntervalSeconds.ToString();
         RuDesktopBox.Text = settings.RuDesktopPath;
         StartupCheck.IsChecked = settings.StartWithWindows;
@@ -37,14 +39,27 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        string protectedSupportPassword = DpapiProtector.Protect(PasswordBox.Password);
+        string protectedRegistrationPassword = DpapiProtector.Protect(RegistrationPasswordBox.Password);
+        if (DpapiProtector.Unprotect(protectedSupportPassword) != PasswordBox.Password ||
+            DpapiProtector.Unprotect(protectedRegistrationPassword) != RegistrationPasswordBox.Password)
+        {
+            ShowValidation(
+                "Не удалось защитить и проверить пароли. " +
+                "Настройки не сохранены. Запустите HonestDesk под тем же пользователем Windows.");
+            return;
+        }
+
         Settings = new AppSettings
         {
             ImapServer = ServerBox.Text.Trim(),
             ImapPort = port,
             UseSsl = SslCheck.IsChecked == true,
             Email = EmailBox.Text.Trim(),
-            ProtectedAppPassword = DpapiProtector.Protect(PasswordBox.Password),
+            ProtectedAppPassword = protectedSupportPassword,
             MailFolder = FolderBox.Text.Trim(),
+            RegistrationEmail = RegistrationEmailBox.Text.Trim(),
+            ProtectedRegistrationAppPassword = protectedRegistrationPassword,
             CheckIntervalSeconds = interval,
             RuDesktopPath = RuDesktopBox.Text.Trim(),
             StartWithWindows = StartupCheck.IsChecked == true

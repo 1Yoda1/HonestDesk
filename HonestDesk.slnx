@@ -1,4 +1,3 @@
 <Solution>
-  <Project Path="HonestFlow.Config.Core/HonestFlow.Config.Core.csproj" />
   <Project Path="HonestDesk/HonestDesk.csproj" />
 </Solution>
