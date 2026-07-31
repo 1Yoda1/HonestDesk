@@ -20,8 +20,7 @@ public partial class ClientProfileWindow : Window
         SecurityText.Text =
             $"RuDesktop: {(client.RuDesktop.Enabled ? "включён" : "выключен")}\n" +
             $"Пароль RuDesktop: {Presence(client.RuDesktop.Password)}\n" +
-            $"Токен клиента: {Presence(client.Token)}\n" +
-            $"Доступ инженера: {(client.EngineerAccess is null ? "не настроен" : "настроен")}";
+            $"Токен клиента: {Presence(client.Token)}";
         HonestFlowVersionText.Text = Version(client.Versions.HonestFlow);
         LmVersionText.Text = Version(client.Versions.LmModule);
         AtolVersionText.Text = Version(client.Versions.AtolDriver);

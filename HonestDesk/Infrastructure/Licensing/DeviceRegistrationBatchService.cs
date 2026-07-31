@@ -48,9 +48,20 @@ namespace HonestDesk.Infrastructure.Licensing
                 }
                 else if (deviceOwners.TryGetValue(request.DeviceId, out string ownerClientId))
                 {
-                    status = string.Equals(ownerClientId, request.ClientId, StringComparison.Ordinal)
-                        ? DeviceRegistrationBatchStatus.AlreadyRegistered
-                        : DeviceRegistrationBatchStatus.DeviceAssignedToAnotherClient;
+                    if (string.Equals(ownerClientId, request.ClientId, StringComparison.Ordinal))
+                    {
+                        LicensedDevice existingDevice = client.Devices?.FirstOrDefault(device =>
+                            string.Equals(device?.DeviceId, request.DeviceId, StringComparison.Ordinal));
+                        status = existingDevice != null &&
+                                 string.IsNullOrWhiteSpace(existingDevice.Address) &&
+                                 !string.IsNullOrWhiteSpace(request.Address)
+                            ? DeviceRegistrationBatchStatus.AddressUpdate
+                            : DeviceRegistrationBatchStatus.AlreadyRegistered;
+                    }
+                    else
+                    {
+                        status = DeviceRegistrationBatchStatus.DeviceAssignedToAnotherClient;
+                    }
 
                     if (status == DeviceRegistrationBatchStatus.DeviceAssignedToAnotherClient)
                         existingOwnerClientId = ownerClientId;
@@ -84,11 +95,25 @@ namespace HonestDesk.Infrastructure.Licensing
                 .ToDictionary(client => client.ClientId, StringComparer.Ordinal);
 
             foreach (DeviceRegistrationBatchItem item in plan.Items.Where(item =>
-                         item.Status == DeviceRegistrationBatchStatus.NewDevice))
+                         item.Status == DeviceRegistrationBatchStatus.NewDevice ||
+                         item.Status == DeviceRegistrationBatchStatus.AddressUpdate))
             {
                 DeviceRegistrationRequest request = item.InboxItem.Request;
                 ClientLicense client = clients[request.ClientId];
                 client.Devices ??= new List<LicensedDevice>();
+
+                if (item.Status == DeviceRegistrationBatchStatus.AddressUpdate)
+                {
+                    LicensedDevice existingDevice = client.Devices.FirstOrDefault(device =>
+                        string.Equals(device?.DeviceId, request.DeviceId, StringComparison.Ordinal));
+                    if (existingDevice != null &&
+                        string.IsNullOrWhiteSpace(existingDevice.Address) &&
+                        !string.IsNullOrWhiteSpace(request.Address))
+                    {
+                        existingDevice.Address = request.Address.Trim();
+                    }
+                    continue;
+                }
 
                 if (client.Devices.Any(device => string.Equals(
                         device?.DeviceId,
@@ -148,6 +173,16 @@ namespace HonestDesk.Infrastructure.Licensing
             if (string.IsNullOrWhiteSpace(groups))
                 groups = "Новых устройств нет";
 
+            string addressUpdates = string.Join(
+                Environment.NewLine,
+                plan.Items
+                    .Where(item => item.Status == DeviceRegistrationBatchStatus.AddressUpdate)
+                    .Select(item =>
+                        $"  • {item.InboxItem.Request.DeviceId}: {item.InboxItem.Request.Address?.Trim()}"));
+
+            if (!string.IsNullOrWhiteSpace(addressUpdates))
+                groups += $"{Environment.NewLine}{Environment.NewLine}Адреса для дозаполнения:{Environment.NewLine}{addressUpdates}";
+
             DeviceRegistrationBatchItem[] conflicts = plan.Items
                 .Where(item => item.Status == DeviceRegistrationBatchStatus.DeviceAssignedToAnotherClient)
                 .ToArray();
@@ -188,6 +223,7 @@ namespace HonestDesk.Infrastructure.Licensing
             return
                 $"Получено корректных заявок: {plan.Items.Count}\n" +
                 $"Новых устройств: {plan.NewDeviceCount}\n" +
+                $"Адресов для дозаполнения: {plan.AddressUpdateCount}\n" +
                 $"Повторных заявок: {plan.Items.Count(x => x.Status == DeviceRegistrationBatchStatus.DuplicateRequest)}\n" +
                 $"Уже зарегистрировано: {plan.Items.Count(x => x.Status == DeviceRegistrationBatchStatus.AlreadyRegistered)}\n" +
                 $"Неизвестных клиентов: {plan.Items.Count(x => x.Status == DeviceRegistrationBatchStatus.UnknownClient)}\n" +
@@ -195,7 +231,7 @@ namespace HonestDesk.Infrastructure.Licensing
                 $"Некорректных писем: {invalidMessageCount}\n\n" +
                 groups +
                 conflictDetails +
-                "\n\nДобавить все новые устройства в открытый manifest?\n" +
+                "\n\nПрименить новые устройства и дозаполнить пустые адреса в открытом manifest?\n" +
                 "Подписание и публикация автоматически выполняться не будут.";
         }
     }

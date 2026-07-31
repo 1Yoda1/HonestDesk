@@ -340,7 +340,7 @@ public partial class LicenseManagerWindow : Window
             _registrationBatchService.Apply(_manifest, plan);
             RefreshLicenseCollection();
 
-            if (plan.NewDeviceCount > 0)
+            if (plan.ChangeCount > 0)
             {
                 foreach (uint messageUid in plan.ProcessedMessageUids)
                     _pendingRegistrationMessageUids.Add(messageUid);
@@ -351,10 +351,10 @@ public partial class LicenseManagerWindow : Window
                 await TryMarkRegistrationMessagesProcessedAsync(plan.ProcessedMessageUids);
             }
 
-            StatusText.Text = $"Добавлено устройств: {plan.NewDeviceCount}. Сохраните и подпишите licenses.json.";
-            _access.Audit($"License registration requests imported; newDevices={plan.NewDeviceCount}");
+            StatusText.Text = $"Добавлено устройств: {plan.NewDeviceCount}; дозаполнено адресов: {plan.AddressUpdateCount}. Сохраните и подпишите licenses.json.";
+            _access.Audit($"License registration requests imported; newDevices={plan.NewDeviceCount}; addressUpdates={plan.AddressUpdateCount}");
             System.Windows.MessageBox.Show(this,
-                $"Добавлено устройств: {plan.NewDeviceCount}.\n\nПисьма будут помечены обработанными только после успешного сохранения и подписи.",
+                $"Добавлено устройств: {plan.NewDeviceCount}.\nДозаполнено адресов: {plan.AddressUpdateCount}.\n\nПисьма будут помечены обработанными только после успешного сохранения и подписи.",
                 "Импорт завершён", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
