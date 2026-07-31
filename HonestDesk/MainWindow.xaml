@@ -65,6 +65,10 @@
                             <TextBlock Text="Администрирование" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="OpenLicensesButton_Click" Margin="0,8,0,0" Content="Лицензии"/>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="OpenJournalButton_Click" Margin="0,8,0,0" Content="Журнал операций"/>
                 </StackPanel>
 
                 <Border Grid.Row="4" Background="#18233D" CornerRadius="16" Padding="16">
@@ -82,7 +86,7 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Column="1" Margin="34,28,34,30">
+        <Grid x:Name="DashboardView" Grid.Column="1" Margin="34,28,34,30">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="22"/>
@@ -104,8 +108,6 @@
                                Foreground="{StaticResource Muted}" FontSize="13" Margin="0,5,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource SoftButton}" Content="Настройки" Click="SettingsButton_Click"
-                            Margin="0,0,10,0"/>
                     <Button x:Name="CheckButton" Style="{StaticResource PrimaryButton}"
                             Content="Обновить заявки" Click="CheckButton_Click"/>
                 </StackPanel>
@@ -233,5 +235,6 @@
                 </Border>
             </Grid>
         </Grid>
+        <ContentControl x:Name="SectionHost" Grid.Column="1" Visibility="Collapsed"/>
     </Grid>
 </Window>

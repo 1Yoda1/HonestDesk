@@ -58,8 +58,6 @@
                                     <TextBlock Text="Функции и устройства выбранного клиента"
                                                Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
                                 </StackPanel>
-                                <Button Style="{StaticResource PrimaryButton}" Content="Применить изменения"
-                                        HorizontalAlignment="Right" Click="ApplyLicenseButton_Click"/>
                             </Grid>
                             <Grid Margin="0,18,0,0">
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
@@ -137,10 +135,10 @@
             <Grid>
                 <TextBlock x:Name="RevisionText" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Style="{StaticResource SoftButton}" Content="Сохранить и подписать"
-                            Click="SaveSignedButton_Click" Margin="0,0,10,0"/>
-                    <Button x:Name="PublishButton" Style="{StaticResource PrimaryButton}" Content="Опубликовать"
-                            Click="PublishButton_Click"/>
+                    <Button Style="{StaticResource SoftButton}" Content="Сохранить черновик"
+                            Click="SaveDraftButton_Click" Margin="0,0,10,0"/>
+                    <Button x:Name="PublishButton" Style="{StaticResource PrimaryButton}" Content="Сохранить и опубликовать"
+                            Click="SaveAndPublishButton_Click"/>
                 </StackPanel>
             </Grid>
         </Border>

@@ -28,6 +28,11 @@ public partial class MainWindow : Window
     private bool _checking;
     private bool _connecting;
     private bool _exitRequested;
+    private AdminEditorWindow? _adminEditor;
+    private LicenseManagerWindow? _licenseManager;
+    private FrameworkElement? _adminContent;
+    private FrameworkElement? _licenseContent;
+    private FrameworkElement? _settingsContent;
     private HelpRequest? _lastNotifiedRequest;
     private DateTimeOffset _adminSessionUntilUtc;
 
@@ -42,6 +47,7 @@ public partial class MainWindow : Window
         RequestsGrid.ItemsSource = _requests;
         BuildTray();
         ConfigureTimer();
+        Loaded += (_, _) => RestoreSelectedSection();
         ReloadRequests();
         _logger.Info("HonestDesk WPF started");
     }
@@ -84,7 +90,10 @@ public partial class MainWindow : Window
         menu.Items.Add("Настройки", null, (_, _) => Dispatcher.Invoke(ShowSettings));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) => Dispatcher.Invoke(ExitApplication));
-        _notifyIcon.Icon = System.Drawing.SystemIcons.Application;
+        var iconResource = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/Resources/hd.ico"))
+            ?? throw new InvalidOperationException("HonestDesk tray icon resource was not found.");
+        using var trayIcon = new System.Drawing.Icon(iconResource.Stream);
+        _notifyIcon.Icon = (System.Drawing.Icon)trayIcon.Clone();
         _notifyIcon.Text = "HonestDesk";
         _notifyIcon.ContextMenuStrip = menu;
         _notifyIcon.Visible = true;
@@ -282,8 +291,8 @@ public partial class MainWindow : Window
         System.Windows.MessageBox.Show(this, message, "HonestDesk", MessageBoxButton.OK, MessageBoxImage.Warning);
 
     private async void CheckButton_Click(object sender, RoutedEventArgs e) => await CheckNowAsync();
-    private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettings();
-    private void DashboardButton_Click(object sender, RoutedEventArgs e) => RequestsGrid.Focus();
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsSection();
+    private void DashboardButton_Click(object sender, RoutedEventArgs e) => ShowSection("Support", null);
     private async void ConnectButton_Click(object sender, RoutedEventArgs e) => await ConnectSelectedAsync();
     private async void RequestsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => await ConnectSelectedAsync();
     private void RequestsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => ShowSelectedDetails();
@@ -330,21 +339,121 @@ public partial class MainWindow : Window
 
     private void OpenConfigEditorButton_Click(object sender, RoutedEventArgs e) => OpenAdminEditor();
 
-    private void OpenAdminEditor()
-    {
-        if (_adminSessionUntilUtc <= DateTimeOffset.UtcNow)
-        {
-            _adminSessionUntilUtc = default;
-            var access = new AdminAccessWindow(_adminAccess) { Owner = this };
-            if (access.ShowDialog() != true) return;
-            _adminSessionUntilUtc = DateTimeOffset.UtcNow.AddMinutes(10);
-        }
+    private void OpenAdminEditor() => _ = OpenAdminEditorAsync();
 
-        _adminAccess.Audit("WPF admin editor opened");
-        var editor = new AdminEditorWindow(_adminAccess, _adminSessionUntilUtc, _settings) { Owner = this };
-        editor.ShowDialog();
+    private async Task OpenAdminEditorAsync()
+    {
+        if (!EnsureAdminSession()) return;
+        if (_adminEditor is null)
+        {
+            _adminEditor = new AdminEditorWindow(_adminAccess, _adminSessionUntilUtc, _settings) { Owner = this };
+            _adminEditor.LicensesRequested += ShowLicenses;
+            _adminEditor.SessionExpired += () =>
+            {
+                _adminSessionUntilUtc = default;
+                ShowSection("Support", null);
+                SetStatus("Административная сессия завершена", "#F3A847");
+            };
+            _adminContent = _adminEditor.DetachContentForEmbedding();
+            await _adminEditor.InitializeEmbeddedAsync();
+            _adminEditor.RestoreSelectedClient(_state.SelectedClientId);
+        }
+        _adminAccess.Audit("Embedded admin editor opened");
+        ShowSection("Clients", _adminContent);
     }
 
+    private bool EnsureAdminSession()
+    {
+        if (_adminSessionUntilUtc > DateTimeOffset.UtcNow) return true;
+        _adminSessionUntilUtc = default;
+        var access = new AdminAccessWindow(_adminAccess) { Owner = this };
+        if (access.ShowDialog() != true) return false;
+        _adminSessionUntilUtc = DateTimeOffset.UtcNow.AddMinutes(10);
+        _adminEditor = null;
+        _adminContent = null;
+        _licenseManager = null;
+        _licenseContent = null;
+        return true;
+    }
+
+    private async void OpenLicensesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!EnsureAdminSession()) return;
+        if (_adminEditor is null) await OpenAdminEditorAsync();
+        _adminEditor?.RequestLicenses();
+    }
+
+    private void ShowLicenses(IReadOnlyDictionary<string, string> clients, SupportMailSettings mailSettings)
+    {
+        if (_licenseManager is null)
+        {
+            _licenseManager = new LicenseManagerWindow(clients, _adminAccess, mailSettings) { Owner = this };
+            _licenseContent = _licenseManager.DetachContentForEmbedding();
+        }
+        ShowSection("Licenses", _licenseContent);
+    }
+
+    private void ShowSettingsSection()
+    {
+        if (_settingsContent is null)
+        {
+            var button = new System.Windows.Controls.Button { Content = "Изменить настройки", Padding = new System.Windows.Thickness(18, 10, 18, 10), HorizontalAlignment = System.Windows.HorizontalAlignment.Left };
+            button.SetResourceReference(StyleProperty, "PrimaryButton");
+            button.Click += (_, _) => ShowSettings();
+            _settingsContent = new StackPanel
+            {
+                Margin = new Thickness(34, 28, 34, 30),
+                Children =
+                {
+                    new TextBlock { Text = "Настройки", FontSize = 29, FontWeight = FontWeights.SemiBold },
+                    new TextBlock { Text = "Почта, интервал проверки и подключение RuDesktop", Margin = new Thickness(0, 6, 0, 22), Foreground = (System.Windows.Media.Brush)FindResource("Muted") },
+                    button
+                }
+            };
+        }
+        ShowSection("Settings", _settingsContent);
+    }
+
+    private void OpenJournalButton_Click(object sender, RoutedEventArgs e)
+    {
+        string ReadLog(string path) => File.Exists(path) ? File.ReadAllText(path) : "Журнал пока пуст.";
+        var text = new System.Windows.Controls.TextBox
+        {
+            Text = ReadLog(AppPaths.LogPath) + Environment.NewLine + ReadLog(AppPaths.AdminAuditPath),
+            IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        var grid = new Grid { Margin = new Thickness(34, 28, 34, 30) };
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition());
+        grid.Children.Add(new TextBlock { Text = "Журнал операций", FontSize = 29, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) });
+        Grid.SetRow(text, 1);
+        grid.Children.Add(text);
+        ShowSection("Journal", grid);
+    }
+
+    private void ShowSection(string section, FrameworkElement? content)
+    {
+        if (_adminEditor is not null) _state.SelectedClientId = _adminEditor.SelectedClientId;
+        _state.SelectedSection = section;
+        _stateService.Save(_state);
+        DashboardView.Visibility = content is null ? Visibility.Visible : Visibility.Collapsed;
+        SectionHost.Visibility = content is null ? Visibility.Collapsed : Visibility.Visible;
+        SectionHost.Content = content;
+    }
+
+    private void RestoreSelectedSection()
+    {
+        switch (_state.SelectedSection)
+        {
+            case "Clients": _ = OpenAdminEditorAsync(); break;
+            case "Licenses": OpenLicensesButton_Click(this, new RoutedEventArgs()); break;
+            case "Settings": ShowSettingsSection(); break;
+            case "Journal": OpenJournalButton_Click(this, new RoutedEventArgs()); break;
+            default: ShowSection("Support", null); break;
+        }
+    }
     private void MarkHandledButton_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedRequest() is not { } request) return;

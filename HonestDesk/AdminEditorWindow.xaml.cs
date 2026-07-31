@@ -43,12 +43,44 @@ public partial class AdminEditorWindow : Window
         _sessionTimer.Start();
         Closed += (_, _) => { _sessionTimer.Stop(); ClearSecrets(); };
     }
+    public event Action<IReadOnlyDictionary<string, string>, SupportMailSettings>? LicensesRequested;
+    public event Action? SessionExpired;
+    private bool _embedded;
+
+    public FrameworkElement DetachContentForEmbedding()
+    {
+        _embedded = true;
+        new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
+        var content = (FrameworkElement)Content;
+        Content = null;
+        return content;
+    }
+
+    public Task InitializeEmbeddedAsync() => LoadRemoteAsync();
+
+    public string? SelectedClientId => (ClientsGrid.SelectedItem as IPData)?.ClientId;
+
+    public void RestoreSelectedClient(string? clientId)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) return;
+        ClientsGrid.SelectedItem = _clients.FirstOrDefault(x =>
+            string.Equals(x.ClientId, clientId, StringComparison.OrdinalIgnoreCase));
+        ClientsGrid.ScrollIntoView(ClientsGrid.SelectedItem);
+    }
+
+    public void RequestLicenses() => LicensesButton_Click(this, new RoutedEventArgs());
 
     private void SessionTimer_Tick(object? sender, EventArgs e)
     {
         if (DateTimeOffset.UtcNow < _sessionUntilUtc) return;
         _access.Audit("Admin session expired");
         _sessionTimer.Stop();
+        if (_embedded)
+        {
+            StatusText.Text = "Административная сессия завершена.";
+            SessionExpired?.Invoke();
+            return;
+        }
         System.Windows.MessageBox.Show(this, "Административная сессия завершена. Несохранённые изменения не опубликованы.",
             "Сессия заблокирована", MessageBoxButton.OK, MessageBoxImage.Information);
         Close();
@@ -102,9 +134,7 @@ public partial class AdminEditorWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = "Ошибка загрузки";
-            System.Windows.MessageBox.Show(this, ex.Message, "Не удалось загрузить конфигурацию",
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Ошибка загрузки: " + ex.Message;
             _access.Audit("Admin configuration load failed");
         }
         finally { SetBusy(false); }
@@ -357,9 +387,7 @@ public partial class AdminEditorWindow : Window
         catch (Exception ex)
         {
             _access.Audit("Admin publication failed");
-            StatusText.Text = "Публикация не завершена";
-            System.Windows.MessageBox.Show(this, ex.Message, "Ошибка публикации",
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Публикация не завершена: " + ex.Message;
         }
         finally
         {
@@ -428,8 +456,7 @@ public partial class AdminEditorWindow : Window
     private static string SelectedText(System.Windows.Controls.ComboBox combo, string fallback) =>
         (combo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? fallback;
 
-    private void ShowValidation(string message) =>
-        System.Windows.MessageBox.Show(this, message, "Проверьте данные", MessageBoxButton.OK, MessageBoxImage.Warning);
+    private void ShowValidation(string message) => StatusText.Text = message;
 
     private void ClientsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
         LoadClient(ClientsGrid.SelectedItem as IPData);
@@ -472,7 +499,13 @@ public partial class AdminEditorWindow : Window
             .Where(x => !string.IsNullOrWhiteSpace(x.ClientId))
             .GroupBy(x => x.ClientId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First().Name ?? x.Key, StringComparer.OrdinalIgnoreCase);
-        new LicenseManagerWindow(clients, _access, _supportMailSettings) { Owner = this }.ShowDialog();
+        if (LicensesRequested is not null)
+        {
+            LicensesRequested.Invoke(clients, _supportMailSettings);
+            return;
+        }
+
+        StatusText.Text = "Раздел лицензий доступен через главное окно HonestDesk.";
     }
 
     private void ApplyRegistrationMailOverride()

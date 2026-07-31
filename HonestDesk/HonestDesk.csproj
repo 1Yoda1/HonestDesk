@@ -8,7 +8,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Resources\hd.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Resources\hd.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="HonestDesk.AdminRuntime">

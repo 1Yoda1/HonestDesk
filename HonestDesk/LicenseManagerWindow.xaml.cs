@@ -33,6 +33,15 @@ public partial class LicenseManagerWindow : Window
     private string _signedSnapshot = "";
     private bool _hasUnsavedRegistrationImports;
     private bool _busy;
+    private bool _publishedAwaitingMessageProcessing;
+
+    public FrameworkElement DetachContentForEmbedding()
+    {
+        new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
+        var content = (FrameworkElement)Content;
+        Content = null;
+        return content;
+    }
 
     public LicenseManagerWindow(
         IReadOnlyDictionary<string, string> clients,
@@ -207,87 +216,128 @@ public partial class LicenseManagerWindow : Window
         }
     }
 
-    private async Task SaveSignedAsync()
-    {
-        if (!ApplySelected() || !SaveSettings()) return;
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        _manifest.Clients = _licenses.ToList();
-        SaveSignedPreservingFeatureNames(_path, DateTimeOffset.UtcNow);
-        _signedSnapshot = Snapshot();
-        _hasUnsavedRegistrationImports = false;
-        uint[] processedUids = _pendingRegistrationMessageUids.ToArray();
-        _pendingRegistrationMessageUids.Clear();
-        bool messagesMarked = await TryMarkRegistrationMessagesProcessedAsync(processedUids);
-        StatusText.Text = $"Локально сохранено и подписано. Revision {_manifest.Revision}";
-        if (!messagesMarked)
-        {
-            StatusText.Text += " Часть писем заявок осталась во входящих.";
-        }
-        RefreshManifest();
-        _access.Audit($"License signed locally; revision={_manifest.Revision}");
-    }
-
-    private async Task PublishAsync()
-    {
-        if (_busy || !ApplySelected() || !SaveSettings()) return;
-        if (!File.Exists(_path) || !File.Exists(_path + ".sig"))
-        {
-            ShowWarning("Сначала нажмите «Сохранить и подписать».");
-            return;
-        }
-        if (Snapshot() != _signedSnapshot)
-        {
-            ShowWarning("После подписи появились изменения. Снова нажмите «Сохранить и подписать».");
-            return;
-        }
-        if (!_documents.Verify(File.ReadAllBytes(_path), File.ReadAllBytes(_path + ".sig"),
-                PublicKeyBox.Text, out string error))
-        {
-            ShowWarning("Подпись не прошла повторную проверку: " + error);
-            return;
-        }
-        if (!YandexDiskSettings.IsConfigured &&
-            new DiskCredentialsWindow { Owner = this }.ShowDialog() != true) return;
-
-        int clientsChanged = ChangedClients(_publishedBase, _manifest);
-        int devicesChanged = ChangedDevices(_publishedBase, _manifest);
-        if (System.Windows.MessageBox.Show(this,
-                $"Опубликовать подписанную лицензию?\n\nRevision: {_manifest.Revision}\n" +
-                $"Изменено клиентов: {clientsChanged}\nИзменено устройств: {devicesChanged}\n" +
-                $"Действует до: {_manifest.ValidUntilUtc:dd.MM.yyyy}",
-                "Публикация лицензии", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-
-        SetBusy(true, "Публикация и удалённая проверка лицензии…");
-        try
-        {
-            _access.Audit($"License publication started; revision={_manifest.Revision}");
-            await _disk.PublishLicensesAsync(_path, _path + ".sig", _manifest.Revision, PublicKeyBox.Text);
-            _publishedBase = Clone(_manifest);
-            StatusText.Text = $"Revision {_manifest.Revision} опубликована и проверена";
-            _access.Audit($"License publication completed; revision={_manifest.Revision}");
-            System.Windows.MessageBox.Show(this,
-                $"Лицензия опубликована и проверена.\nЖурнал: {LicensePublicationJournal.PathName}",
-                "Готово", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (LicensePublicationException ex)
-        {
-            _access.Audit($"License publication failed; stage={ex.Stage}");
-            ShowWarning($"Этап: {ex.Stage}\n{ex.Message}");
-        }
-        catch (Exception ex)
-        {
-            _access.Audit("License publication failed; stage=Unexpected");
-            ShowWarning(ex.Message);
-        }
-        finally { SetBusy(false); }
-    }
-
     private static int ChangedClients(LicenseManifest before, LicenseManifest after)
     {
         var oldMap = (before.Clients ?? []).ToDictionary(x => x.ClientId ?? "", JsonConvert.SerializeObject);
         var newMap = (after.Clients ?? []).ToDictionary(x => x.ClientId ?? "", JsonConvert.SerializeObject);
         return oldMap.Keys.Union(newMap.Keys).Count(key =>
             !oldMap.TryGetValue(key, out var left) || !newMap.TryGetValue(key, out var right) || left != right);
+    }
+    private void SaveDraft()
+    {
+        if (_busy || !ApplySelected() || !SaveSettings()) return;
+        try
+        {
+            _manifest.Clients = _licenses.ToList();
+            LicenseDocumentService.Validate(_manifest);
+            string draftPath = _path + ".draft";
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(draftPath))!);
+            File.WriteAllText(draftPath,
+                JsonConvert.SerializeObject(_manifest, Formatting.Indented), new UTF8Encoding(false));
+            StatusText.Text = $"Черновик сохранён локально: {draftPath}";
+            _access.Audit($"License draft saved; revision={_manifest.Revision}");
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Черновик не сохранён: " + ex.Message;
+            _access.Audit("License draft save failed");
+        }
+    }
+
+    private async Task SaveAndPublishAsync()
+    {
+        if (_busy) return;
+        if (_publishedAwaitingMessageProcessing) { await RetryPendingMessageProcessingAsync(); return; }
+        if (!ApplySelected() || !SaveSettings()) return;
+        if (!YandexDiskSettings.IsConfigured)
+        {
+            var credentials = new DiskCredentialsWindow { Owner = Owner };
+            if (credentials.ShowDialog() != true) return;
+        }
+
+        LicenseManifest before = Clone(_manifest);
+        byte[]? previousJson = File.Exists(_path) ? File.ReadAllBytes(_path) : null;
+        byte[]? previousSignature = File.Exists(_path + ".sig") ? File.ReadAllBytes(_path + ".sig") : null;
+        uint[] pendingMessages = _pendingRegistrationMessageUids.ToArray();
+        string stage = "Завершение редактирования";
+        SetBusy(true, stage + "…");
+        try
+        {
+            DevicesGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            DevicesGrid.CommitEdit(DataGridEditingUnit.Row, true);
+            if (!ApplySelected()) return;
+            stage = "Проверка данных";
+            StatusText.Text = stage + "…";
+            _manifest.Clients = _licenses.ToList();
+            LicenseDocumentService.Validate(_manifest);
+            stage = "Сохранение и подпись licenses.json";
+            StatusText.Text = stage + "…";
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
+            SaveSignedPreservingFeatureNames(_path, DateTimeOffset.UtcNow);
+            _signedSnapshot = Snapshot();
+            RefreshManifest();
+            stage = "Публикация версии и обновление licenses-current.json";
+            StatusText.Text = stage + "…";
+            _access.Audit($"License publication started; revision={_manifest.Revision}");
+            await _disk.PublishLicensesAsync(_path, _path + ".sig", _manifest.Revision, PublicKeyBox.Text);
+            _publishedAwaitingMessageProcessing = true;
+            stage = "Пометка импортированных писем";
+            StatusText.Text = stage + "…";
+            if (pendingMessages.Length > 0)
+                await _registrationInbox.MarkProcessedAsync(_supportMailSettings, pendingMessages, CancellationToken.None);
+            _pendingRegistrationMessageUids.Clear();
+            _hasUnsavedRegistrationImports = false;
+            _publishedBase = Clone(_manifest);
+            _publishedAwaitingMessageProcessing = false;
+            StatusText.Text = $"Готово: revision {_manifest.Revision} сохранена, подписана и опубликована. Обработано писем: {pendingMessages.Length}.";
+            _access.Audit($"License publication completed; revision={_manifest.Revision}; messages={pendingMessages.Length}");
+        }
+        catch (Exception ex)
+        {
+            if (!_publishedAwaitingMessageProcessing)
+            {
+                _manifest = before;
+                RestoreLocalFile(_path, previousJson);
+                RestoreLocalFile(_path + ".sig", previousSignature);
+                RefreshLicenseCollection();
+            }
+            string detail = ex is LicensePublicationException publication
+                ? publication.Stage + ": " + publication.Message : ex.Message;
+            StatusText.Text = _publishedAwaitingMessageProcessing
+                ? $"Revision {_manifest.Revision} опубликована, но письма не обработаны: {detail}. Повторите операцию."
+                : $"Не опубликовано. Этап «{stage}»: {detail}. Можно повторить операцию.";
+            _access.Audit($"License save and publication failed; stage={stage}");
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async Task RetryPendingMessageProcessingAsync()
+    {
+        SetBusy(true, "Повторная обработка импортированных писем…");
+        try
+        {
+            uint[] pending = _pendingRegistrationMessageUids.ToArray();
+            if (pending.Length > 0)
+                await _registrationInbox.MarkProcessedAsync(_supportMailSettings, pending, CancellationToken.None);
+            _pendingRegistrationMessageUids.Clear();
+            _hasUnsavedRegistrationImports = false;
+            _publishedAwaitingMessageProcessing = false;
+            StatusText.Text = $"Готово: revision {_manifest.Revision} опубликована; обработано писем: {pending.Length}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Лицензия уже опубликована, но письма всё ещё не обработаны: " + ex.Message;
+        }
+        finally { SetBusy(false); }
+    }
+    private static void RestoreLocalFile(string path, byte[]? content)
+    {
+        if (content is null)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return;
+        }
+        File.WriteAllBytes(path, content);
     }
 
     private static int ChangedDevices(LicenseManifest before, LicenseManifest after) =>
@@ -340,16 +390,10 @@ public partial class LicenseManagerWindow : Window
             _registrationBatchService.Apply(_manifest, plan);
             RefreshLicenseCollection();
 
-            if (plan.ChangeCount > 0)
-            {
-                foreach (uint messageUid in plan.ProcessedMessageUids)
-                    _pendingRegistrationMessageUids.Add(messageUid);
-                _hasUnsavedRegistrationImports = true;
-            }
-            else
-            {
-                await TryMarkRegistrationMessagesProcessedAsync(plan.ProcessedMessageUids);
-            }
+            foreach (uint messageUid in plan.ProcessedMessageUids)
+                _pendingRegistrationMessageUids.Add(messageUid);
+            _hasUnsavedRegistrationImports = _pendingRegistrationMessageUids.Count > 0;
+
 
             StatusText.Text = $"Добавлено устройств: {plan.NewDeviceCount}; дозаполнено адресов: {plan.AddressUpdateCount}. Сохраните и подпишите licenses.json.";
             _access.Audit($"License registration requests imported; newDevices={plan.NewDeviceCount}; addressUpdates={plan.AddressUpdateCount}");
@@ -369,22 +413,6 @@ public partial class LicenseManagerWindow : Window
             SetBusy(false);
         }
     }
-    private async Task<bool> TryMarkRegistrationMessagesProcessedAsync(IReadOnlyCollection<uint> messageUids)
-    {
-        if (messageUids.Count == 0) return true;
-        try
-        {
-            await _registrationInbox.MarkProcessedAsync(_supportMailSettings, messageUids, CancellationToken.None);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _access.Audit("License registration messages could not be marked processed");
-            ShowWarning("Лицензия сохранена, но письма заявок не удалось пометить обработанными:\n" + ex.Message);
-            return false;
-        }
-    }
-
     private void ClearPendingRegistrationImports()
     {
         _pendingRegistrationMessageUids.Clear();
@@ -554,8 +582,7 @@ public partial class LicenseManagerWindow : Window
         Comment = value.Comment
     };
 
-    private void ShowWarning(string message) =>
-        System.Windows.MessageBox.Show(this, message, "Лицензии HonestFlow", MessageBoxButton.OK, MessageBoxImage.Warning);
+    private void ShowWarning(string message) => StatusText.Text = message;
 
     private static string? PickKey(string title)
     {
@@ -645,8 +672,8 @@ public partial class LicenseManagerWindow : Window
     }
 
     private async void LoadPublishedButton_Click(object sender, RoutedEventArgs e) => await LoadPublishedAsync();
-    private async void SaveSignedButton_Click(object sender, RoutedEventArgs e) { try { await SaveSignedAsync(); } catch (Exception ex) { ShowWarning(ex.Message); } }
-    private async void PublishButton_Click(object sender, RoutedEventArgs e) => await PublishAsync();
+    private void SaveDraftButton_Click(object sender, RoutedEventArgs e) => SaveDraft();
+    private async void SaveAndPublishButton_Click(object sender, RoutedEventArgs e) => await SaveAndPublishAsync();
     private async void ImportRegistrationRequestsButton_Click(object sender, RoutedEventArgs e) => await ImportRegistrationRequestsAsync();
     private void PrivateKeyBrowse_Click(object sender, RoutedEventArgs e) { if (PickKey("Выберите закрытый ключ") is { } path) PrivateKeyBox.Text = path; }
     private void PublicKeyBrowse_Click(object sender, RoutedEventArgs e) { if (PickKey("Выберите публичный ключ") is { } path) PublicKeyBox.Text = path; }
