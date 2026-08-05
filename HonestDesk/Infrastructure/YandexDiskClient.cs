@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using HonestDesk.Models;
+using HonestDesk.Models.Licensing;
 using HonestDesk.Infrastructure.Licensing;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -110,8 +111,15 @@ namespace HonestDesk.Infrastructure
         }
 
         public async Task PublishLicensesAsync(
-            string jsonPath, string signaturePath, long revision, string publicKeyPath)
+            string jsonPath,
+            string signaturePath,
+            LicenseManifest manifest,
+            string keyId,
+            string privateKeyPath,
+            string publicKeyPath)
         {
+            if (manifest == null) throw new ArgumentNullException(nameof(manifest));
+            long revision = manifest.Revision;
             string versionName = "revision-" + revision.ToString("D20");
             string publicVersionPath = "/licenses/versions/" + versionName;
             string remoteRoot = CombineRemotePath(YandexDiskSettings.RemoteDirectory, "licenses");
@@ -119,10 +127,25 @@ namespace HonestDesk.Infrastructure
             string remoteVersion = CombineRemotePath(remoteVersions, versionName);
             byte[] json = File.ReadAllBytes(jsonPath);
             byte[] signature = File.ReadAllBytes(signaturePath);
+            var grantBuilder = new LicenseGrantPublicationBuilder();
+            IReadOnlyList<LicenseGrantPublication> grants =
+                grantBuilder.Build(manifest, keyId, privateKeyPath);
+            if (grants.GroupBy(grant => grant.GrantRoot, StringComparer.Ordinal)
+                .Any(group => group.Count() > 1))
+                throw new LicensePublicationException(
+                    "GrantPreparation",
+                    "The manifest contains duplicate ClientId/DeviceId grant targets.");
+
             var verifier = new LicenseDocumentService();
 
             if (!verifier.Verify(json, signature, publicKeyPath, out string localError))
                 throw new LicensePublicationException("LocalSignatureVerification", localError);
+
+            foreach (LicenseGrantPublication grant in grants)
+                if (!verifier.Verify(
+                    grant.GrantBytes, grant.SignatureBytes, publicKeyPath, out localError))
+                    throw new LicensePublicationException(
+                        "LocalGrantSignatureVerification", localError);
 
             string manifestHash = ComputeHash(json);
             string signatureHash = ComputeHash(signature);
@@ -148,6 +171,12 @@ namespace HonestDesk.Infrastructure
                         "VersionVerification",
                         remoteError ?? "Remote hashes do not match local files.");
                 }
+
+                foreach (LicenseGrantPublication grant in grants)
+                    await UploadAndVerifyGrantVersionAsync(grant, publicKeyPath, verifier);
+
+                foreach (LicenseGrantPublication grant in grants)
+                    await SwitchAndVerifyGrantPointerAsync(grant);
 
                 var pointer = new LicensePublicationPointer
                 {
@@ -200,6 +229,70 @@ namespace HonestDesk.Infrastructure
             }
         }
 
+        private async Task UploadAndVerifyGrantVersionAsync(
+            LicenseGrantPublication grant,
+            string publicKeyPath,
+            LicenseDocumentService verifier)
+        {
+            string remoteGrantRoot = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                grant.GrantRoot.TrimStart('/'));
+            string remoteVersions = CombineRemotePath(remoteGrantRoot, "versions");
+            string remoteVersion = CombineRemotePath(
+                remoteVersions,
+                Path.GetFileName(grant.VersionPath));
+            await EnsureDirectoryAsync(remoteGrantRoot);
+            await EnsureDirectoryAsync(remoteVersions);
+            await EnsureDirectoryAsync(remoteVersion);
+            await UploadBytesAsync(
+                grant.GrantBytes, CombineRemotePath(remoteVersion, "grant.json"));
+            await UploadBytesAsync(
+                grant.SignatureBytes, CombineRemotePath(remoteVersion, "grant.json.sig"));
+
+            byte[] remoteGrant = await ReadPublicBytesAsync(grant.VersionPath + "/grant.json");
+            byte[] remoteSignature =
+                await ReadPublicBytesAsync(grant.VersionPath + "/grant.json.sig");
+            string error = null;
+            if (ComputeHash(remoteGrant) != ComputeHash(grant.GrantBytes) ||
+                ComputeHash(remoteSignature) != ComputeHash(grant.SignatureBytes) ||
+                !verifier.Verify(
+                    remoteGrant, remoteSignature, publicKeyPath, out error))
+                throw new LicensePublicationException(
+                    "GrantVersionVerification",
+                    error ?? "Remote grant hashes do not match local files.");
+        }
+
+        private async Task SwitchAndVerifyGrantPointerAsync(
+            LicenseGrantPublication grant)
+        {
+            string remoteGrantRoot = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                grant.GrantRoot.TrimStart('/'));
+            string temporaryPointer = CombineRemotePath(
+                remoteGrantRoot,
+                ".grant-current-" + Guid.NewGuid().ToString("N") + ".tmp");
+            string finalPointer =
+                CombineRemotePath(remoteGrantRoot, "grant-current.json");
+            await UploadBytesAsync(grant.PointerBytes, temporaryPointer);
+            await MoveRemoteAsync(temporaryPointer, finalPointer);
+
+            byte[] publishedBytes =
+                await ReadPublicBytesAsync(grant.GrantRoot + "/grant-current.json");
+            var expected =
+                JsonConvert.DeserializeObject<LicenseGrantPublicationPointer>(
+                    Encoding.UTF8.GetString(grant.PointerBytes));
+            var published =
+                JsonConvert.DeserializeObject<LicenseGrantPublicationPointer>(
+                    Encoding.UTF8.GetString(publishedBytes));
+            if (expected == null || published == null ||
+                published.Revision != expected.Revision ||
+                published.VersionPath != expected.VersionPath ||
+                published.GrantSha256 != expected.GrantSha256 ||
+                published.SignatureSha256 != expected.SignatureSha256)
+                throw new LicensePublicationException(
+                    "GrantPointerVerification",
+                    "Published grant pointer does not match the requested revision.");
+        }
         protected virtual async Task UploadBytesAsync(byte[] bytes, string remotePath)
         {
             using var client = CreateAuthorizedClient(TimeSpan.FromMinutes(2));

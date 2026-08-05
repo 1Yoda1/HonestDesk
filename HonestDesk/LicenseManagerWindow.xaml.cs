@@ -279,7 +279,13 @@ public partial class LicenseManagerWindow : Window
             stage = "Публикация версии и обновление licenses-current.json";
             StatusText.Text = stage + "…";
             _access.Audit($"License publication started; revision={_manifest.Revision}");
-            await _disk.PublishLicensesAsync(_path, _path + ".sig", _manifest.Revision, PublicKeyBox.Text);
+            await _disk.PublishLicensesAsync(
+                _path,
+                _path + ".sig",
+                _manifest,
+                _settings.KeyId,
+                _settings.PrivateKeyPath,
+                PublicKeyBox.Text);
             _publishedAwaitingMessageProcessing = true;
             stage = "Пометка импортированных писем";
             StatusText.Text = stage + "…";
