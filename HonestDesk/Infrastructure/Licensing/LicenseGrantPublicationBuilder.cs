@@ -15,12 +15,21 @@ public sealed class LicenseGrantPublicationBuilder
             throw new InvalidOperationException("Закрытый ключ не настроен или недоступен.");
 
         string pem = File.ReadAllText(privateKeyPath);
+        var operatorDeviceIds = new HashSet<string>(
+            (manifest.OperatorDevices ?? [])
+                .Where(device => device is not null && !string.IsNullOrWhiteSpace(device.DeviceId))
+                .Select(device => device.DeviceId),
+            StringComparer.OrdinalIgnoreCase);
         var result = new List<LicenseGrantPublication>();
         foreach (ClientLicense client in manifest.Clients ?? [])
         {
             foreach (LicensedDevice device in client.Devices ?? [])
             {
                 if (device is null || string.IsNullOrWhiteSpace(device.DeviceId)) continue;
+                // Legacy manifests give a global operator device precedence over a
+                // client device with the same identity. Publish only that grant.
+                if (operatorDeviceIds.Contains(device.DeviceId)) continue;
+
                 result.Add(BuildOne(new LicenseGrant
                 {
                     SchemaVersion = manifest.SchemaVersion, Revision = manifest.Revision,

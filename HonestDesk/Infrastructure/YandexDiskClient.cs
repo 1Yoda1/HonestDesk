@@ -130,12 +130,6 @@ namespace HonestDesk.Infrastructure
             var grantBuilder = new LicenseGrantPublicationBuilder();
             IReadOnlyList<LicenseGrantPublication> grants =
                 grantBuilder.Build(manifest, keyId, privateKeyPath);
-            if (grants.GroupBy(grant => grant.GrantRoot, StringComparer.Ordinal)
-                .Any(group => group.Count() > 1))
-                throw new LicensePublicationException(
-                    "GrantPreparation",
-                    "The manifest contains duplicate ClientId/DeviceId grant targets.");
-
             var verifier = new LicenseDocumentService();
 
             if (!verifier.Verify(json, signature, publicKeyPath, out string localError))
