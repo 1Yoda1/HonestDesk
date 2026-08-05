@@ -19,6 +19,7 @@ namespace HonestDesk.Infrastructure
     public class YandexDiskClient
     {
         private const string PublicResourcesApi = "https://cloud-api.yandex.net/v1/disk/public/resources";
+        private const int GrantPublicationConcurrency = 4;
         private const string PublicDownloadApi = "https://cloud-api.yandex.net/v1/disk/public/resources/download";
         private static readonly Uri WebDavBaseUri = new Uri("https://webdav.yandex.ru");
 
@@ -166,11 +167,12 @@ namespace HonestDesk.Infrastructure
                         remoteError ?? "Remote hashes do not match local files.");
                 }
 
-                foreach (LicenseGrantPublication grant in grants)
-                    await UploadAndVerifyGrantVersionAsync(grant, publicKeyPath, verifier);
-
-                foreach (LicenseGrantPublication grant in grants)
-                    await SwitchAndVerifyGrantPointerAsync(grant);
+                string remoteGrantsRoot = CombineRemotePath(remoteRoot, "grants");
+                await EnsureDirectoryAsync(remoteGrantsRoot);
+                await RunGrantBatchAsync(
+                    grants,
+                    grant => UploadAndVerifyGrantVersionAsync(grant, publicKeyPath, verifier));
+                await RunGrantBatchAsync(grants, SwitchAndVerifyGrantPointerAsync);
 
                 var pointer = new LicensePublicationPointer
                 {
@@ -228,9 +230,6 @@ namespace HonestDesk.Infrastructure
             string publicKeyPath,
             LicenseDocumentService verifier)
         {
-            string remoteGrantsRoot = CombineRemotePath(
-                YandexDiskSettings.RemoteDirectory,
-                "licenses/grants");
             string remoteGrantRoot = CombineRemotePath(
                 YandexDiskSettings.RemoteDirectory,
                 grant.GrantRoot.TrimStart('/'));
@@ -238,7 +237,6 @@ namespace HonestDesk.Infrastructure
             string remoteVersion = CombineRemotePath(
                 remoteVersions,
                 Path.GetFileName(grant.VersionPath));
-            await EnsureDirectoryAsync(remoteGrantsRoot);
             await EnsureDirectoryAsync(remoteGrantRoot);
             await EnsureDirectoryAsync(remoteVersions);
             await EnsureDirectoryAsync(remoteVersion);
@@ -290,6 +288,25 @@ namespace HonestDesk.Infrastructure
                 throw new LicensePublicationException(
                     "GrantPointerVerification",
                     "Published grant pointer does not match the requested revision.");
+        }
+
+        private static async Task RunGrantBatchAsync(
+            IReadOnlyList<LicenseGrantPublication> grants,
+            Func<LicenseGrantPublication, Task> action)
+        {
+            using var concurrency = new SemaphoreSlim(GrantPublicationConcurrency);
+            await Task.WhenAll(grants.Select(async grant =>
+            {
+                await concurrency.WaitAsync();
+                try
+                {
+                    await action(grant);
+                }
+                finally
+                {
+                    concurrency.Release();
+                }
+            }));
         }
         protected virtual async Task UploadBytesAsync(byte[] bytes, string remotePath)
         {
