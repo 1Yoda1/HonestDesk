@@ -415,21 +415,42 @@ namespace HonestDesk.Infrastructure
         protected virtual async Task EnsureDirectoryAsync(string remotePath)
         {
             using var client = CreateAuthorizedClient(TimeSpan.FromSeconds(60));
-            var request = new HttpRequestMessage(new HttpMethod("MKCOL"), BuildWebDavUri(remotePath));
             ConfigEditorLogger.Info($"Ensuring WebDAV directory exists: {remotePath}");
-            var response = await client.SendAsync(request);
+            if (await RemoteDirectoryExistsAsync(client, remotePath))
+            {
+                ConfigEditorLogger.Info($"WebDAV directory already exists: {remotePath}");
+                return;
+            }
 
-            if (response.IsSuccessStatusCode || (int)response.StatusCode == 405)
+            using var request = new HttpRequestMessage(
+                new HttpMethod("MKCOL"),
+                BuildWebDavUri(remotePath));
+            using var response = await client.SendAsync(request);
+            if (response.IsSuccessStatusCode ||
+                (int)response.StatusCode == 405 ||
+                await RemoteDirectoryExistsAsync(client, remotePath))
             {
                 ConfigEditorLogger.Info($"WebDAV directory ready: {remotePath}. Code: {(int)response.StatusCode}");
                 return;
             }
 
-            var text = await response.Content.ReadAsStringAsync();
+            string text = await response.Content.ReadAsStringAsync();
             ConfigEditorLogger.Info($"WebDAV directory creation failed. Remote: {remotePath}. Code: {(int)response.StatusCode}. Response: {text}");
             throw new Exception(
                 $"Could not create Yandex Disk folder {remotePath}. " +
                 $"Code: {(int)response.StatusCode}. Response: {text}");
+        }
+
+        private static async Task<bool> RemoteDirectoryExistsAsync(
+            HttpClient client,
+            string remotePath)
+        {
+            using var request = new HttpRequestMessage(
+                new HttpMethod("PROPFIND"),
+                BuildWebDavUri(remotePath));
+            request.Headers.TryAddWithoutValidation("Depth", "0");
+            using HttpResponseMessage response = await client.SendAsync(request);
+            return response.IsSuccessStatusCode;
         }
 
         private static HttpClient CreatePublicClient()
