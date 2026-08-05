@@ -19,7 +19,8 @@ namespace HonestDesk.Infrastructure
     public class YandexDiskClient
     {
         private const string PublicResourcesApi = "https://cloud-api.yandex.net/v1/disk/public/resources";
-        private const int GrantPublicationConcurrency = 4;
+        private const int GrantPublicationConcurrency = 2;
+        private const int GrantPublicationMaxAttempts = 3;
         private const string PublicDownloadApi = "https://cloud-api.yandex.net/v1/disk/public/resources/download";
         private static readonly Uri WebDavBaseUri = new Uri("https://webdav.yandex.ru");
 
@@ -300,13 +301,53 @@ namespace HonestDesk.Infrastructure
                 await concurrency.WaitAsync();
                 try
                 {
-                    await action(grant);
+                    await RunGrantActionWithRetryAsync(grant, action);
                 }
                 finally
                 {
                     concurrency.Release();
                 }
             }));
+        }
+
+        private static async Task RunGrantActionWithRetryAsync(
+            LicenseGrantPublication grant,
+            Func<LicenseGrantPublication, Task> action)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    await action(grant);
+                    return;
+                }
+                catch (Exception exception) when (
+                    attempt < GrantPublicationMaxAttempts && IsTransientGrantFailure(exception))
+                {
+                    var delay = TimeSpan.FromSeconds(attempt == 1 ? 1 : 3);
+                    ConfigEditorLogger.Info(
+                        $"Transient grant publication failure for {grant.GrantRoot}; " +
+                        $"retry {attempt + 1}/{GrantPublicationMaxAttempts} in {delay.TotalSeconds:0}s: " +
+                        exception.Message);
+                    await Task.Delay(delay);
+                }
+            }
+        }
+
+        private static bool IsTransientGrantFailure(Exception exception)
+        {
+            if (exception is HttpRequestException ||
+                exception is TaskCanceledException ||
+                exception is IOException)
+                return true;
+
+            if (exception is LicensePublicationException publicationException)
+                return publicationException.Stage == "Upload" ||
+                       publicationException.Stage == "RemoteRead" ||
+                       publicationException.Stage == "PointerSwitch" ||
+                       publicationException.Stage == "Transport";
+
+            return false;
         }
         protected virtual async Task UploadBytesAsync(byte[] bytes, string remotePath)
         {
