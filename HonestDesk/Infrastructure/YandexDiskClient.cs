@@ -228,6 +228,9 @@ namespace HonestDesk.Infrastructure
             string publicKeyPath,
             LicenseDocumentService verifier)
         {
+            string remoteGrantsRoot = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                "licenses/grants");
             string remoteGrantRoot = CombineRemotePath(
                 YandexDiskSettings.RemoteDirectory,
                 grant.GrantRoot.TrimStart('/'));
@@ -235,6 +238,7 @@ namespace HonestDesk.Infrastructure
             string remoteVersion = CombineRemotePath(
                 remoteVersions,
                 Path.GetFileName(grant.VersionPath));
+            await EnsureDirectoryAsync(remoteGrantsRoot);
             await EnsureDirectoryAsync(remoteGrantRoot);
             await EnsureDirectoryAsync(remoteVersions);
             await EnsureDirectoryAsync(remoteVersion);
