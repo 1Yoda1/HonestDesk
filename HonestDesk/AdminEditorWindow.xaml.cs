@@ -39,8 +39,11 @@ public partial class AdminEditorWindow : Window
         _clientsView.Filter = FilterClient;
         ClientsGrid.ItemsSource = _clientsView;
         Loaded += async (_, _) => await LoadRemoteAsync();
-        _sessionTimer.Tick += SessionTimer_Tick;
-        _sessionTimer.Start();
+        if (_sessionUntilUtc != DateTimeOffset.MaxValue)
+        {
+            _sessionTimer.Tick += SessionTimer_Tick;
+            _sessionTimer.Start();
+        }
         Closed += (_, _) => { _sessionTimer.Stop(); ClearSecrets(); };
     }
     public event Action<IReadOnlyDictionary<string, string>, SupportMailSettings>? LicensesRequested;

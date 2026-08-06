@@ -21,6 +21,7 @@ namespace HonestDesk.Infrastructure
         private const string PublicResourcesApi = "https://cloud-api.yandex.net/v1/disk/public/resources";
         private const int GrantPublicationConcurrency = 2;
         private const int GrantPublicationMaxAttempts = 3;
+        private static readonly TimeSpan GrantUploadTimeout = TimeSpan.FromMinutes(10);
         private const string PublicDownloadApi = "https://cloud-api.yandex.net/v1/disk/public/resources/download";
         private static readonly Uri WebDavBaseUri = new Uri("https://webdav.yandex.ru");
 
@@ -170,10 +171,15 @@ namespace HonestDesk.Infrastructure
 
                 string remoteGrantsRoot = CombineRemotePath(remoteRoot, "grants");
                 await EnsureDirectoryAsync(remoteGrantsRoot);
+                IReadOnlyList<LicenseGrantPublication> changedGrants =
+                    await FindChangedGrantsAsync(grants);
+                ConfigEditorLogger.Info(
+                    $"Grant publication plan: total={grants.Count}; " +
+                    $"changed={changedGrants.Count}; skipped={grants.Count - changedGrants.Count}.");
                 await RunGrantBatchAsync(
-                    grants,
+                    changedGrants,
                     grant => UploadAndVerifyGrantVersionAsync(grant, publicKeyPath, verifier));
-                await RunGrantBatchAsync(grants, SwitchAndVerifyGrantPointerAsync);
+                await RunGrantBatchAsync(changedGrants, SwitchAndVerifyGrantPointerAsync);
 
                 var pointer = new LicensePublicationPointer
                 {
@@ -259,6 +265,58 @@ namespace HonestDesk.Infrastructure
                     error ?? "Remote grant hashes do not match local files.");
         }
 
+
+        private async Task<IReadOnlyList<LicenseGrantPublication>> FindChangedGrantsAsync(
+            IReadOnlyList<LicenseGrantPublication> grants)
+        {
+            using var concurrency = new SemaphoreSlim(GrantPublicationConcurrency);
+            Task<LicenseGrantPublication?>[] checks = grants.Select(async grant =>
+            {
+                await concurrency.WaitAsync();
+                try
+                {
+                    return await IsGrantChangedAsync(grant) ? grant : null;
+                }
+                finally
+                {
+                    concurrency.Release();
+                }
+            }).ToArray();
+            return (await Task.WhenAll(checks))
+                .Where(grant => grant != null)
+                .Cast<LicenseGrantPublication>()
+                .ToList();
+        }
+
+        private async Task<bool> IsGrantChangedAsync(LicenseGrantPublication grant)
+        {
+            string remotePointer = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                grant.GrantRoot.TrimStart('/') + "/grant-current.json");
+            byte[]? pointerBytes = await TryReadAuthorizedBytesAsync(remotePointer);
+            if (pointerBytes == null)
+                return true;
+
+            var pointer = JsonConvert.DeserializeObject<LicenseGrantPublicationPointer>(
+                Encoding.UTF8.GetString(pointerBytes));
+            return pointer == null ||
+                   pointer.GrantSha256 != ComputeHash(grant.GrantBytes);
+        }
+
+        private static async Task<byte[]?> TryReadAuthorizedBytesAsync(string remotePath)
+        {
+            using var client = CreateAuthorizedClient(TimeSpan.FromMinutes(2));
+            using HttpResponseMessage response =
+                await client.GetAsync(BuildWebDavUri(remotePath));
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return null;
+            if (!response.IsSuccessStatusCode)
+                throw new LicensePublicationException(
+                    "RemoteRead",
+                    $"WebDAV GET failed for {Path.GetFileName(remotePath)}: " +
+                    $"HTTP {(int)response.StatusCode}.");
+            return await response.Content.ReadAsByteArrayAsync();
+        }
         private async Task SwitchAndVerifyGrantPointerAsync(
             LicenseGrantPublication grant)
         {
@@ -351,7 +409,7 @@ namespace HonestDesk.Infrastructure
         }
         protected virtual async Task UploadBytesAsync(byte[] bytes, string remotePath)
         {
-            using var client = CreateAuthorizedClient(TimeSpan.FromMinutes(2));
+            using var client = CreateAuthorizedClient(GrantUploadTimeout);
             using var content = new ByteArrayContent(bytes);
             content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
             using var response = await client.PutAsync(BuildWebDavUri(remotePath), content);

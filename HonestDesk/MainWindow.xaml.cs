@@ -368,7 +368,7 @@ public partial class MainWindow : Window
         _adminSessionUntilUtc = default;
         var access = new AdminAccessWindow(_adminAccess) { Owner = this };
         if (access.ShowDialog() != true) return false;
-        _adminSessionUntilUtc = DateTimeOffset.UtcNow.AddMinutes(10);
+        _adminSessionUntilUtc = DateTimeOffset.MaxValue;
         _adminEditor = null;
         _adminContent = null;
         _licenseManager = null;
