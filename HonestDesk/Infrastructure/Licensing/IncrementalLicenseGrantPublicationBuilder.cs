@@ -11,6 +11,7 @@ public sealed class LicenseGrantPublicationIndex
     public long LegacyManifestRevision { get; set; }
     public string KeyId { get; set; } = "";
     public DateTimeOffset PublishedAtUtc { get; set; }
+    public bool CoverageComplete { get; set; }
     public Dictionary<string, LicenseGrantPublicationIndexEntry> Entries { get; set; } =
         new(StringComparer.Ordinal);
 }

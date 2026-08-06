@@ -13,6 +13,7 @@ using HonestDesk.Infrastructure.Licensing;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Security.Cryptography;
+using System.Xml.Linq;
 
 namespace HonestDesk.Infrastructure
 {
@@ -169,6 +170,13 @@ namespace HonestDesk.Infrastructure
                 LicenseGrantPublicationIndex grantIndex =
                     await LoadOrBootstrapGrantIndexAsync(
                         grantTargets, keyId, publicKeyPath, verifier);
+                bool grantCoverageChanged = !grantIndex.CoverageComplete;
+                if (grantCoverageChanged)
+                {
+                    await ReconcileGrantIndexCoverageAsync(
+                        grantIndex, publicKeyPath, verifier);
+                    grantIndex.CoverageComplete = true;
+                }
                 var changedGrants = new List<IncrementalLicenseGrantPublication>();
                 var desiredHashes = grantTargets
                     .Select(target => target.TargetHash)
@@ -218,11 +226,18 @@ namespace HonestDesk.Infrastructure
                 foreach (IncrementalLicenseGrantPublication item in changedGrants)
                     grantIndex.Entries[item.Target.TargetHash] =
                         grantBuilder.CreateIndexEntry(item);
-                grantIndex.LegacyManifestRevision = revision;
-                grantIndex.KeyId = keyId;
-                grantIndex.PublishedAtUtc = DateTimeOffset.UtcNow;
-                await PublishGrantIndexAsync(
-                    grantIndex, grantBuilder, publicKeyPath, verifier, remoteRoot);
+                if (changedGrants.Count > 0 || grantCoverageChanged)
+                {
+                    grantIndex.LegacyManifestRevision = revision;
+                    grantIndex.KeyId = keyId;
+                    grantIndex.PublishedAtUtc = DateTimeOffset.UtcNow;
+                    await PublishGrantIndexAsync(
+                        grantIndex, grantBuilder, publicKeyPath, verifier, remoteRoot);
+                }
+                else
+                {
+                    ConfigEditorLogger.Info("Grant index is unchanged; publication skipped.");
+                }
 
                 var pointer = new LicensePublicationPointer
                 {
@@ -309,6 +324,171 @@ namespace HonestDesk.Infrastructure
         }
 
 
+
+
+        private async Task ReconcileGrantIndexCoverageAsync(
+            LicenseGrantPublicationIndex index,
+            string publicKeyPath,
+            LicenseDocumentService verifier)
+        {
+            IReadOnlyList<string> remoteTargetHashes =
+                await ListRemoteGrantTargetHashesAsync();
+            string[] missing = remoteTargetHashes
+                .Where(hash => !index.Entries.ContainsKey(hash))
+                .ToArray();
+            if (missing.Length == 0)
+            {
+                ConfigEditorLogger.Info(
+                    $"Grant index coverage is complete: {index.Entries.Count} targets.");
+                return;
+            }
+
+            ConfigEditorLogger.Info(
+                $"Grant index coverage found {missing.Length} unindexed remote targets.");
+            using var concurrency = new SemaphoreSlim(GrantPublicationConcurrency);
+            Task<KeyValuePair<string, LicenseGrantPublicationIndexEntry>?>[] imports =
+                missing.Select(async targetHash =>
+                {
+                    await concurrency.WaitAsync();
+                    try
+                    {
+                        return await ImportRemoteGrantByHashAsync(
+                            targetHash, publicKeyPath, verifier);
+                    }
+                    finally
+                    {
+                        concurrency.Release();
+                    }
+                }).ToArray();
+            foreach (var imported in await Task.WhenAll(imports))
+                if (imported.HasValue)
+                    index.Entries[imported.Value.Key] = imported.Value.Value;
+        }
+
+        private static async Task<IReadOnlyList<string>> ListRemoteGrantTargetHashesAsync()
+        {
+            string remoteGrantsRoot = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                "licenses/grants");
+            using var client = CreateAuthorizedClient(TimeSpan.FromMinutes(5));
+            using var request = new HttpRequestMessage(
+                new HttpMethod("PROPFIND"),
+                BuildWebDavUri(remoteGrantsRoot));
+            request.Headers.TryAddWithoutValidation("Depth", "1");
+            using HttpResponseMessage response = await client.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+                throw new LicensePublicationException(
+                    "GrantIndexCoverage",
+                    $"WebDAV PROPFIND failed for grants: HTTP {(int)response.StatusCode}.");
+
+            string xml = await response.Content.ReadAsStringAsync();
+            XDocument document;
+            try
+            {
+                document = XDocument.Parse(xml);
+            }
+            catch (Exception exception) when (
+                exception is System.Xml.XmlException ||
+                exception is InvalidOperationException)
+            {
+                throw new LicensePublicationException(
+                    "GrantIndexCoverage",
+                    "WebDAV grants listing returned invalid XML.",
+                    exception);
+            }
+
+            return document
+                .Descendants()
+                .Where(element => element.Name.LocalName == "href")
+                .Select(element => element.Value)
+                .Select(href =>
+                {
+                    string path = Uri.TryCreate(href, UriKind.Absolute, out Uri? uri)
+                        ? uri.AbsolutePath
+                        : href;
+                    return Uri.UnescapeDataString(
+                        path.Replace('\\', '/').TrimEnd('/').Split('/').LastOrDefault() ?? "");
+                })
+                .Where(name => Regex.IsMatch(name, "^[0-9a-fA-F]{64}$"))
+                .Select(name => name.ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private async Task<KeyValuePair<string, LicenseGrantPublicationIndexEntry>?>
+            ImportRemoteGrantByHashAsync(
+                string targetHash,
+                string publicKeyPath,
+                LicenseDocumentService verifier)
+        {
+            string grantRoot = "/licenses/grants/" + targetHash;
+            string remotePointerPath = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                grantRoot.TrimStart('/') + "/grant-current.json");
+            byte[]? pointerBytes =
+                await TryReadAuthorizedBytesAsync(remotePointerPath);
+            if (pointerBytes == null)
+            {
+                ConfigEditorLogger.Info(
+                    $"Ignoring inactive grant directory without pointer: {targetHash}.");
+                return null;
+            }
+            var pointer =
+                JsonConvert.DeserializeObject<LicenseGrantPublicationPointer>(
+                    Encoding.UTF8.GetString(pointerBytes));
+            if (pointer == null)
+                throw new LicensePublicationException(
+                    "GrantIndexCoverage",
+                    $"Remote grant pointer is invalid for {targetHash}.");
+
+            string remoteVersionPath = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                pointer.VersionPath.TrimStart('/'));
+            byte[]? grantBytes = await TryReadAuthorizedBytesAsync(
+                CombineRemotePath(remoteVersionPath, "grant.json"));
+            byte[]? signatureBytes = await TryReadAuthorizedBytesAsync(
+                CombineRemotePath(remoteVersionPath, "grant.json.sig"));
+            string? error = null;
+            if (grantBytes == null || signatureBytes == null ||
+                ComputeHash(grantBytes) != pointer.GrantSha256 ||
+                ComputeHash(signatureBytes) != pointer.SignatureSha256 ||
+                !verifier.Verify(
+                    grantBytes, signatureBytes, publicKeyPath, out error))
+                throw new LicensePublicationException(
+                    "GrantIndexCoverage",
+                    error ?? $"Remote grant verification failed for {targetHash}.");
+
+            var grant = JsonConvert.DeserializeObject<LicenseGrant>(
+                Encoding.UTF8.GetString(grantBytes))
+                ?? throw new LicensePublicationException(
+                    "GrantIndexCoverage",
+                    $"Remote grant JSON is invalid for {targetHash}.");
+            string computedTargetHash =
+                IncrementalLicenseGrantPublicationBuilder.TargetHash(
+                    grant.ClientId, grant.DeviceId);
+            if (!string.Equals(
+                    computedTargetHash, targetHash, StringComparison.Ordinal))
+                throw new LicensePublicationException(
+                    "GrantIndexCoverage",
+                    $"Remote grant identity does not match directory {targetHash}.");
+
+            var entry = new LicenseGrantPublicationIndexEntry
+            {
+                ClientId = grant.ClientId,
+                DeviceId = grant.DeviceId,
+                SemanticSha256 =
+                    IncrementalLicenseGrantPublicationBuilder.SemanticHash(grant),
+                GrantRevision = pointer.Revision,
+                VersionPath = pointer.VersionPath,
+                GrantSha256 = pointer.GrantSha256,
+                SignatureSha256 = pointer.SignatureSha256,
+                IssuedAtUtc = grant.IssuedAtUtc,
+                ValidUntilUtc = grant.ValidUntilUtc,
+                Revoked = false
+            };
+            return new KeyValuePair<string, LicenseGrantPublicationIndexEntry>(
+                targetHash, entry);
+        }
 
         private async Task<LicenseGrantPublicationIndex> LoadOrBootstrapGrantIndexAsync(
             IReadOnlyList<LicenseGrantTarget> targets,
