@@ -188,7 +188,8 @@ namespace HonestDesk.Infrastructure
                     grantIndex.Entries.TryGetValue(target.TargetHash, out var previous);
                     if (!keyChanged && previous != null && !previous.Revoked &&
                         previous.SemanticSha256 == target.SemanticSha256 &&
-                        previous.ValidUntilUtc > manifest.IssuedAtUtc.AddDays(30))
+                        (previous.ValidUntilUtc == manifest.ValidUntilUtc ||
+                         previous.ValidUntilUtc > DateTimeOffset.UtcNow.AddDays(30)))
                         continue;
                     changedGrants.Add(grantBuilder.BuildChanged(
                         target,
