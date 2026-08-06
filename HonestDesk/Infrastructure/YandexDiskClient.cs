@@ -130,19 +130,14 @@ namespace HonestDesk.Infrastructure
             string remoteVersion = CombineRemotePath(remoteVersions, versionName);
             byte[] json = File.ReadAllBytes(jsonPath);
             byte[] signature = File.ReadAllBytes(signaturePath);
-            var grantBuilder = new LicenseGrantPublicationBuilder();
-            IReadOnlyList<LicenseGrantPublication> grants =
-                grantBuilder.Build(manifest, keyId, privateKeyPath);
+            var grantBuilder =
+                new IncrementalLicenseGrantPublicationBuilder(keyId, privateKeyPath);
+            IReadOnlyList<LicenseGrantTarget> grantTargets =
+                grantBuilder.BuildTargets(manifest);
             var verifier = new LicenseDocumentService();
 
             if (!verifier.Verify(json, signature, publicKeyPath, out string localError))
                 throw new LicensePublicationException("LocalSignatureVerification", localError);
-
-            foreach (LicenseGrantPublication grant in grants)
-                if (!verifier.Verify(
-                    grant.GrantBytes, grant.SignatureBytes, publicKeyPath, out localError))
-                    throw new LicensePublicationException(
-                        "LocalGrantSignatureVerification", localError);
 
             string manifestHash = ComputeHash(json);
             string signatureHash = ComputeHash(signature);
@@ -171,15 +166,63 @@ namespace HonestDesk.Infrastructure
 
                 string remoteGrantsRoot = CombineRemotePath(remoteRoot, "grants");
                 await EnsureDirectoryAsync(remoteGrantsRoot);
-                IReadOnlyList<LicenseGrantPublication> changedGrants =
-                    await FindChangedGrantsAsync(grants);
+                LicenseGrantPublicationIndex grantIndex =
+                    await LoadOrBootstrapGrantIndexAsync(
+                        grantTargets, keyId, publicKeyPath, verifier);
+                var changedGrants = new List<IncrementalLicenseGrantPublication>();
+                var desiredHashes = grantTargets
+                    .Select(target => target.TargetHash)
+                    .ToHashSet(StringComparer.Ordinal);
+                bool keyChanged =
+                    !string.Equals(grantIndex.KeyId, keyId, StringComparison.Ordinal);
+                foreach (LicenseGrantTarget target in grantTargets)
+                {
+                    grantIndex.Entries.TryGetValue(target.TargetHash, out var previous);
+                    if (!keyChanged && previous != null && !previous.Revoked &&
+                        previous.SemanticSha256 == target.SemanticSha256 &&
+                        previous.ValidUntilUtc > manifest.IssuedAtUtc.AddDays(30))
+                        continue;
+                    changedGrants.Add(grantBuilder.BuildChanged(
+                        target,
+                        previous,
+                        manifest.IssuedAtUtc,
+                        manifest.ValidUntilUtc));
+                }
+                foreach (var pair in grantIndex.Entries.ToList())
+                {
+                    if (desiredHashes.Contains(pair.Key) || pair.Value.Revoked)
+                        continue;
+                    changedGrants.Add(grantBuilder.BuildRevocation(
+                        pair.Value,
+                        manifest.IssuedAtUtc,
+                        manifest.ValidUntilUtc));
+                }
+                foreach (IncrementalLicenseGrantPublication item in changedGrants)
+                    if (!verifier.Verify(
+                        item.Publication.GrantBytes,
+                        item.Publication.SignatureBytes,
+                        publicKeyPath,
+                        out localError))
+                        throw new LicensePublicationException(
+                            "LocalGrantSignatureVerification", localError);
                 ConfigEditorLogger.Info(
-                    $"Grant publication plan: total={grants.Count}; " +
-                    $"changed={changedGrants.Count}; skipped={grants.Count - changedGrants.Count}.");
+                    $"Grant publication plan: desired={grantTargets.Count}; " +
+                    $"changed-or-new-or-revoked={changedGrants.Count}; " +
+                    $"skipped={grantTargets.Count - changedGrants.Count(item => !item.Revoked)}.");
+                IReadOnlyList<LicenseGrantPublication> grantPublications =
+                    changedGrants.Select(item => item.Publication).ToList();
                 await RunGrantBatchAsync(
-                    changedGrants,
+                    grantPublications,
                     grant => UploadAndVerifyGrantVersionAsync(grant, publicKeyPath, verifier));
-                await RunGrantBatchAsync(changedGrants, SwitchAndVerifyGrantPointerAsync);
+                await RunGrantBatchAsync(grantPublications, SwitchAndVerifyGrantPointerAsync);
+                foreach (IncrementalLicenseGrantPublication item in changedGrants)
+                    grantIndex.Entries[item.Target.TargetHash] =
+                        grantBuilder.CreateIndexEntry(item);
+                grantIndex.LegacyManifestRevision = revision;
+                grantIndex.KeyId = keyId;
+                grantIndex.PublishedAtUtc = DateTimeOffset.UtcNow;
+                await PublishGrantIndexAsync(
+                    grantIndex, grantBuilder, publicKeyPath, verifier, remoteRoot);
 
                 var pointer = new LicensePublicationPointer
                 {
@@ -266,41 +309,221 @@ namespace HonestDesk.Infrastructure
         }
 
 
-        private async Task<IReadOnlyList<LicenseGrantPublication>> FindChangedGrantsAsync(
-            IReadOnlyList<LicenseGrantPublication> grants)
+
+        private async Task<LicenseGrantPublicationIndex> LoadOrBootstrapGrantIndexAsync(
+            IReadOnlyList<LicenseGrantTarget> targets,
+            string keyId,
+            string publicKeyPath,
+            LicenseDocumentService verifier)
         {
-            using var concurrency = new SemaphoreSlim(GrantPublicationConcurrency);
-            Task<LicenseGrantPublication?>[] checks = grants.Select(async grant =>
+            string remotePointerPath = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                "licenses/grants-index-current.json");
+            byte[]? pointerBytes = await TryReadAuthorizedBytesAsync(remotePointerPath);
+            if (pointerBytes == null)
             {
-                await concurrency.WaitAsync();
-                try
-                {
-                    return await IsGrantChangedAsync(grant) ? grant : null;
-                }
-                finally
-                {
-                    concurrency.Release();
-                }
-            }).ToArray();
-            return (await Task.WhenAll(checks))
-                .Where(grant => grant != null)
-                .Cast<LicenseGrantPublication>()
-                .ToList();
+                ConfigEditorLogger.Info(
+                    "Grant publication index is absent; importing existing personal pointers once.");
+                return await BootstrapGrantIndexAsync(
+                    targets, keyId, publicKeyPath, verifier);
+            }
+
+            var pointer = JsonConvert.DeserializeObject<LicenseGrantIndexPublicationPointer>(
+                Encoding.UTF8.GetString(pointerBytes))
+                ?? throw new LicensePublicationException(
+                    "GrantIndexRead", "Published grant index pointer is invalid.");
+            byte[] indexBytes =
+                await ReadPublicBytesAsync(pointer.VersionPath + "/index.json");
+            byte[] signatureBytes =
+                await ReadPublicBytesAsync(pointer.VersionPath + "/index.json.sig");
+            string? error = null;
+            if (ComputeHash(indexBytes) != pointer.IndexSha256 ||
+                ComputeHash(signatureBytes) != pointer.SignatureSha256 ||
+                !verifier.Verify(indexBytes, signatureBytes, publicKeyPath, out error))
+                throw new LicensePublicationException(
+                    "GrantIndexVerification",
+                    error ?? "Published grant index hashes do not match.");
+
+            var index = JsonConvert.DeserializeObject<LicenseGrantPublicationIndex>(
+                Encoding.UTF8.GetString(indexBytes))
+                ?? throw new LicensePublicationException(
+                    "GrantIndexRead", "Published grant index is invalid.");
+            index.Entries ??=
+                new Dictionary<string, LicenseGrantPublicationIndexEntry>(
+                    StringComparer.Ordinal);
+            return index;
         }
 
-        private async Task<bool> IsGrantChangedAsync(LicenseGrantPublication grant)
+        private async Task<LicenseGrantPublicationIndex> BootstrapGrantIndexAsync(
+            IReadOnlyList<LicenseGrantTarget> targets,
+            string keyId,
+            string publicKeyPath,
+            LicenseDocumentService verifier)
         {
-            string remotePointer = CombineRemotePath(
+            using var concurrency = new SemaphoreSlim(GrantPublicationConcurrency);
+            Task<KeyValuePair<string, LicenseGrantPublicationIndexEntry>?>[] imports =
+                targets.Select(async target =>
+                {
+                    await concurrency.WaitAsync();
+                    try
+                    {
+                        return await ImportExistingGrantAsync(
+                            target, publicKeyPath, verifier);
+                    }
+                    finally
+                    {
+                        concurrency.Release();
+                    }
+                }).ToArray();
+            var index = new LicenseGrantPublicationIndex { KeyId = keyId };
+            foreach (var imported in await Task.WhenAll(imports))
+                if (imported.HasValue)
+                    index.Entries[imported.Value.Key] = imported.Value.Value;
+            ConfigEditorLogger.Info(
+                $"Grant publication index bootstrap imported {index.Entries.Count} " +
+                $"of {targets.Count} desired targets.");
+            return index;
+        }
+
+        private async Task<KeyValuePair<string, LicenseGrantPublicationIndexEntry>?>
+            ImportExistingGrantAsync(
+                LicenseGrantTarget target,
+                string publicKeyPath,
+                LicenseDocumentService verifier)
+        {
+            string remotePointerPath = CombineRemotePath(
                 YandexDiskSettings.RemoteDirectory,
-                grant.GrantRoot.TrimStart('/') + "/grant-current.json");
-            byte[]? pointerBytes = await TryReadAuthorizedBytesAsync(remotePointer);
+                target.GrantRoot.TrimStart('/') + "/grant-current.json");
+            byte[]? pointerBytes =
+                await TryReadAuthorizedBytesAsync(remotePointerPath);
             if (pointerBytes == null)
-                return true;
+                return null;
 
             var pointer = JsonConvert.DeserializeObject<LicenseGrantPublicationPointer>(
-                Encoding.UTF8.GetString(pointerBytes));
-            return pointer == null ||
-                   pointer.GrantSha256 != ComputeHash(grant.GrantBytes);
+                Encoding.UTF8.GetString(pointerBytes))
+                ?? throw new LicensePublicationException(
+                    "GrantIndexBootstrap",
+                    $"Existing pointer is invalid for {target.GrantRoot}.");
+            string remoteVersionPath = CombineRemotePath(
+                YandexDiskSettings.RemoteDirectory,
+                pointer.VersionPath.TrimStart('/'));
+            byte[]? grantBytes = await TryReadAuthorizedBytesAsync(
+                CombineRemotePath(remoteVersionPath, "grant.json"));
+            byte[]? signatureBytes = await TryReadAuthorizedBytesAsync(
+                CombineRemotePath(remoteVersionPath, "grant.json.sig"));
+            string? error = null;
+            if (grantBytes == null || signatureBytes == null ||
+                ComputeHash(grantBytes) != pointer.GrantSha256 ||
+                ComputeHash(signatureBytes) != pointer.SignatureSha256 ||
+                !verifier.Verify(
+                    grantBytes, signatureBytes, publicKeyPath, out error))
+                throw new LicensePublicationException(
+                    "GrantIndexBootstrap",
+                    error ?? $"Existing grant verification failed for {target.GrantRoot}.");
+
+            var grant = JsonConvert.DeserializeObject<LicenseGrant>(
+                Encoding.UTF8.GetString(grantBytes))
+                ?? throw new LicensePublicationException(
+                    "GrantIndexBootstrap",
+                    $"Existing grant is invalid for {target.GrantRoot}.");
+            if (!string.Equals(
+                    grant.ClientId, target.Grant.ClientId, StringComparison.Ordinal) ||
+                !string.Equals(
+                    grant.DeviceId, target.Grant.DeviceId, StringComparison.Ordinal))
+                throw new LicensePublicationException(
+                    "GrantIndexBootstrap",
+                    $"Existing grant identity does not match {target.GrantRoot}.");
+
+            var entry = new LicenseGrantPublicationIndexEntry
+            {
+                ClientId = grant.ClientId,
+                DeviceId = grant.DeviceId,
+                SemanticSha256 =
+                    IncrementalLicenseGrantPublicationBuilder.SemanticHash(grant),
+                GrantRevision = pointer.Revision,
+                VersionPath = pointer.VersionPath,
+                GrantSha256 = pointer.GrantSha256,
+                SignatureSha256 = pointer.SignatureSha256,
+                IssuedAtUtc = grant.IssuedAtUtc,
+                ValidUntilUtc = grant.ValidUntilUtc,
+                Revoked = false
+            };
+            return new KeyValuePair<string, LicenseGrantPublicationIndexEntry>(
+                target.TargetHash, entry);
+        }
+
+        private async Task PublishGrantIndexAsync(
+            LicenseGrantPublicationIndex index,
+            IncrementalLicenseGrantPublicationBuilder builder,
+            string publicKeyPath,
+            LicenseDocumentService verifier,
+            string remoteLicensesRoot)
+        {
+            string versionName =
+                "legacy-revision-" + index.LegacyManifestRevision.ToString("D20");
+            string publicVersionPath =
+                "/licenses/grant-index/versions/" + versionName;
+            string remoteIndexRoot =
+                CombineRemotePath(remoteLicensesRoot, "grant-index");
+            string remoteVersions =
+                CombineRemotePath(remoteIndexRoot, "versions");
+            string remoteVersion =
+                CombineRemotePath(remoteVersions, versionName);
+            await EnsureDirectoryAsync(remoteIndexRoot);
+            await EnsureDirectoryAsync(remoteVersions);
+            await EnsureDirectoryAsync(remoteVersion);
+
+            (byte[] indexBytes, byte[] signatureBytes) = builder.SignIndex(index);
+            await UploadBytesAsync(
+                indexBytes, CombineRemotePath(remoteVersion, "index.json"));
+            await UploadBytesAsync(
+                signatureBytes, CombineRemotePath(remoteVersion, "index.json.sig"));
+            byte[] remoteIndex =
+                await ReadPublicBytesAsync(publicVersionPath + "/index.json");
+            byte[] remoteSignature =
+                await ReadPublicBytesAsync(publicVersionPath + "/index.json.sig");
+            string indexHash = ComputeHash(indexBytes);
+            string signatureHash = ComputeHash(signatureBytes);
+            string? error = null;
+            if (ComputeHash(remoteIndex) != indexHash ||
+                ComputeHash(remoteSignature) != signatureHash ||
+                !verifier.Verify(
+                    remoteIndex, remoteSignature, publicKeyPath, out error))
+                throw new LicensePublicationException(
+                    "GrantIndexVerification",
+                    error ?? "Uploaded grant index verification failed.");
+
+            var pointer = new LicenseGrantIndexPublicationPointer
+            {
+                LegacyManifestRevision = index.LegacyManifestRevision,
+                VersionPath = publicVersionPath,
+                IndexSha256 = indexHash,
+                SignatureSha256 = signatureHash,
+                PublishedAtUtc = DateTimeOffset.UtcNow
+            };
+            byte[] pointerBytes = new UTF8Encoding(false).GetBytes(
+                JsonConvert.SerializeObject(pointer, Formatting.Indented));
+            string temporaryPointer = CombineRemotePath(
+                remoteLicensesRoot,
+                ".grants-index-current-" + Guid.NewGuid().ToString("N") + ".tmp");
+            string finalPointer =
+                CombineRemotePath(remoteLicensesRoot, "grants-index-current.json");
+            await UploadBytesAsync(pointerBytes, temporaryPointer);
+            await MoveRemoteAsync(temporaryPointer, finalPointer);
+
+            byte[] publishedPointerBytes =
+                await ReadPublicBytesAsync("/licenses/grants-index-current.json");
+            var published =
+                JsonConvert.DeserializeObject<LicenseGrantIndexPublicationPointer>(
+                    Encoding.UTF8.GetString(publishedPointerBytes));
+            if (published == null ||
+                published.LegacyManifestRevision != pointer.LegacyManifestRevision ||
+                published.VersionPath != pointer.VersionPath ||
+                published.IndexSha256 != pointer.IndexSha256 ||
+                published.SignatureSha256 != pointer.SignatureSha256)
+                throw new LicensePublicationException(
+                    "GrantIndexPointerVerification",
+                    "Published grant index pointer does not match.");
         }
 
         private static async Task<byte[]?> TryReadAuthorizedBytesAsync(string remotePath)
