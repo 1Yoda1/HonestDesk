@@ -7,23 +7,35 @@ namespace HonestDesk.Services;
 public sealed class SettingsService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    public Exception? LastLoadError { get; private set; }
 
     public AppSettings Load()
     {
+        LastLoadError = null;
         AppPaths.EnsureDataDirectory();
         if (!File.Exists(AppPaths.SettingsPath))
         {
             return new AppSettings();
         }
 
-        var json = File.ReadAllText(AppPaths.SettingsPath);
-        return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+        try
+        {
+            var json = File.ReadAllText(AppPaths.SettingsPath);
+            return JsonSerializer.Deserialize<AppSettings>(json)
+                ?? throw new InvalidDataException("settings.json contains no settings object.");
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            LastLoadError = ex;
+            return new AppSettings();
+        }
     }
 
     public void Save(AppSettings settings)
     {
         AppPaths.EnsureDataDirectory();
-        File.WriteAllText(AppPaths.SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+        AtomicFile.WriteAllText(AppPaths.SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+        LastLoadError = null;
         ApplyStartup(settings.StartWithWindows);
     }
 

@@ -33,7 +33,7 @@ public sealed class ServerDeviceLicenseService
         IReadOnlyList<AdminLicense> allLicenses = await _api.GetLicensesAsync(null, token);
         AdminLicense[] clientLicenses = allLicenses
             .Where(x => string.Equals(x.ClientId, clientId, StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(x.Status, "Revoked", StringComparison.OrdinalIgnoreCase))
+                        string.Equals(x.Status, "Active", StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(x => x.Revision).ThenByDescending(x => x.Id).ToArray();
 
         LicenseGrant? template = null;

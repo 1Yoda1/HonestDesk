@@ -98,14 +98,14 @@ public partial class AdminEditorWindow : Window
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             HonestLicenseAdminApiClient api = CreateApiClient();
-            IReadOnlyList<AdminClient> serverClients = await api.GetClientsAsync(cts.Token);
+            IReadOnlyList<AdminClient> serverClients = await api.GetClientsAsync(cts.Token, includeInactive: true);
             IReadOnlyList<AdminVersion> serverVersions = await api.GetVersionsAsync(cts.Token);
             IReadOnlyList<AdminAsset> serverAssets = await api.GetAssetsAsync(null, cts.Token);
             AssetsGrid.ItemsSource = serverAssets
                 .OrderBy(x => x.Component).ThenByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.Architecture).ToList();
             _serverClientIds.Clear();
             var clients = new List<IPData>();
-            foreach (AdminClient source in serverClients)
+            foreach (AdminClient source in serverClients.Where(x => x.IsActive))
             {
                 string clientId = source.ClientId ?? "";
                 _serverClientIds.Add(clientId);
@@ -120,6 +120,11 @@ public partial class AdminEditorWindow : Window
                     HasLmDatabaseBackup = source.HasLmDatabaseBackup,
                     Password = integration.IdentificationCode ?? "",
                     Token = integration.ChzToken ?? "",
+                    RuDesktop = new RuDesktopSettings
+                    {
+                        Enabled = integration.RuDesktopEnabled,
+                        AutoOfferPasswordSetup = integration.RuDesktopAutoOfferPasswordSetup
+                    },
                     Versions = new VersionsData
                     {
                         LmModule = Override(overrides, "LmModule"),
@@ -377,6 +382,8 @@ public partial class AdminEditorWindow : Window
     {
         if (_clients.Any(x => string.IsNullOrWhiteSpace(x.Name) || string.IsNullOrWhiteSpace(x.ClientId)))
             throw new InvalidDataException("У каждого клиента должны быть название и ClientId.");
+        if (_clients.Any(x => string.IsNullOrWhiteSpace(x.Password)))
+            throw new InvalidDataException("У каждого клиента должен быть пароль продавца.");
         if (_clients.GroupBy(x => x.ClientId.Trim(), StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1))
             throw new InvalidDataException("ClientId должны быть уникальными.");
         if (_clients.Any(x => !string.IsNullOrWhiteSpace(x.Architecture) &&
@@ -419,13 +426,27 @@ public partial class AdminEditorWindow : Window
             _access.Audit($"Admin publication started; clients={_clients.Count}; changed={changed}");
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
             HonestLicenseAdminApiClient api = CreateApiClient();
+            IReadOnlyList<AdminClient> currentServerClients = await api.GetClientsAsync(cts.Token, includeInactive: true);
+            Dictionary<string, AdminClient> currentServerClientsById = currentServerClients
+                .Where(x => !string.IsNullOrWhiteSpace(x.ClientId))
+                .ToDictionary(x => x.ClientId!, StringComparer.OrdinalIgnoreCase);
             foreach (IPData client in _clients)
             {
-                if (_serverClientIds.Contains(client.ClientId))
+                if (currentServerClientsById.TryGetValue(client.ClientId, out AdminClient? serverClient))
+                {
+                    if (!serverClient.IsActive)
+                        throw new InvalidOperationException($"Клиент {client.ClientId} отключён на HonestLicenseServer. Повторная активация из этого окна не реализована.");
                     await api.UpdateClientAsync(client.ClientId, new { client.Name, client.Inn, client.Architecture, isActive = true, client.HasLmDatabaseBackup }, cts.Token);
+                }
                 else
+                {
                     await api.CreateClientAsync(new { client.ClientId, client.Name, login = client.ClientId, password = client.Password, client.Inn, client.Architecture, client.HasLmDatabaseBackup }, cts.Token);
-                await api.PutClientIntegrationSettingsAsync(client.ClientId, client.Password, client.Token, cts.Token);
+                    currentServerClientsById[client.ClientId] = new AdminClient { ClientId = client.ClientId, IsActive = true };
+                }
+                await api.PutClientIntegrationSettingsAsync(client.ClientId, client.Password, client.Token,
+                    client.RuDesktop?.Enabled == true,
+                    client.RuDesktop?.AutoOfferPasswordSetup == true,
+                    cts.Token);
                 await api.PutComponentOverrideAsync(client.ClientId, "LmModule", client.Versions?.LmModule, cts.Token);
                 await api.PutComponentOverrideAsync(client.ClientId, "AtolDriver", client.Versions?.AtolDriver, cts.Token);
                 await api.PutComponentOverrideAsync(client.ClientId, "ESM", client.Versions?.ESM, cts.Token);
@@ -539,14 +560,61 @@ public partial class AdminEditorWindow : Window
         MarkChanged();
     }
 
-    private void DeleteClientButton_Click(object sender, RoutedEventArgs e)
+    private async void DeleteClientButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_busy) return;
         if (ClientsGrid.SelectedItem is not IPData client) return;
-        if (System.Windows.MessageBox.Show(this, $"Удалить клиента «{client.Name}» из черновика?",
+        bool existsOnServer = _serverClientIds.Contains(client.ClientId);
+        string question = existsOnServer
+            ? $"Отключить клиента «{client.Name}» на HonestLicenseServer? Активные сессии клиента будут отозваны."
+            : $"Удалить нового клиента «{client.Name}» из локального черновика?";
+        if (System.Windows.MessageBox.Show(this, question,
                 "Подтверждение", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        _clients.Remove(client);
-        ClientsGrid.SelectedItem = _clients.FirstOrDefault();
-        MarkChanged();
+        if (!existsOnServer)
+        {
+            _clients.Remove(client);
+            ClientsGrid.SelectedItem = _clients.FirstOrDefault();
+            MarkChanged();
+            return;
+        }
+
+        SetBusy(true, "Отключение клиента на HonestLicenseServer…");
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            HonestLicenseAdminApiClient api = CreateApiClient();
+            IReadOnlyList<AdminClient> serverClients = await api.GetClientsAsync(cts.Token, includeInactive: true);
+            AdminClient serverClient = serverClients.SingleOrDefault(x =>
+                    string.Equals(x.ClientId, client.ClientId, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("Клиент не найден на HonestLicenseServer.");
+            await api.UpdateClientAsync(client.ClientId, new
+            {
+                name = serverClient.Name ?? client.ClientId,
+                serverClient.Inn,
+                architecture = serverClient.Architecture ?? "x64",
+                isActive = false,
+                serverClient.HasLmDatabaseBackup
+            }, cts.Token);
+            _clients.Remove(client);
+            ClientsGrid.SelectedItem = _clients.FirstOrDefault();
+            AdminDraft? baseline = JsonConvert.DeserializeObject<AdminDraft>(_baselineJson);
+            baseline?.Clients.RemoveAll(x => string.Equals(x.ClientId, client.ClientId, StringComparison.OrdinalIgnoreCase));
+            if (baseline is not null)
+                _baselineJson = JsonConvert.SerializeObject(new
+                {
+                    Clients = baseline.Clients.OrderBy(x => x.ClientId).ToList(),
+                    Versions = baseline.Versions
+                });
+            MarkChanged();
+            StatusText.Text = "Клиент отключён на HonestLicenseServer.";
+            _access.Audit($"Client disabled; client={client.ClientId}");
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Не удалось отключить клиента: " + ex.Message;
+            _access.Audit($"Client disable failed; client={client.ClientId}");
+        }
+        finally { SetBusy(false); }
     }
 
     private void CredentialsButton_Click(object sender, RoutedEventArgs e) =>

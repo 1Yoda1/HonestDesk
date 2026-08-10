@@ -80,11 +80,11 @@
                             <DataGrid x:Name="DevicesGrid" Grid.Row="1" AutoGenerateColumns="False" Margin="0,14,0,10"
                                       CanUserAddRows="False" HeadersVisibility="Column">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="DEVICE ID" Binding="{Binding DeviceId}" Width="1.2*"/>
-                                    <DataGridTextColumn Header="НАЗВАНИЕ" Binding="{Binding Name}" Width="*"/>
-                                    <DataGridTextColumn Header="АДРЕС ТОЧКИ" Binding="{Binding Address}" Width="1.3*"/>
+                                    <DataGridTextColumn Header="DEVICE ID" Binding="{Binding DeviceId}" Width="1.2*" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="НАЗВАНИЕ" Binding="{Binding Name}" Width="*" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="АДРЕС ТОЧКИ" Binding="{Binding Address}" Width="1.3*" IsReadOnly="True"/>
                                     <DataGridCheckBoxColumn Header="ВКЛ" Binding="{Binding Enabled}" Width="48"/>
-                                    <DataGridTextColumn Header="КОММЕНТАРИЙ" Binding="{Binding Comment}" Width="*"/>
+                                    <DataGridTextColumn Header="КОММЕНТАРИЙ" Binding="{Binding Comment}" Width="*" IsReadOnly="True"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                             <StackPanel Grid.Row="2" Orientation="Horizontal">

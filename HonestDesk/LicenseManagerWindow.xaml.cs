@@ -186,13 +186,22 @@ public partial class LicenseManagerWindow : Window
             HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
                 () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
             IReadOnlyList<AdminLicense> licenses = await api.GetLicensesAsync(null, CancellationToken.None);
+            IReadOnlyList<AdminClient> activeClients = await api.GetClientsAsync(CancellationToken.None);
             IReadOnlyList<AdminDevice> serverDevices = await api.GetDevicesAsync(null, CancellationToken.None);
-            Dictionary<string, AdminDevice> devicesById = serverDevices
-                .Where(x => !string.IsNullOrWhiteSpace(x.DeviceId))
-                .GroupBy(x => x.DeviceId!, StringComparer.OrdinalIgnoreCase)
+            var activeClientIds = new HashSet<string>(activeClients
+                .Where(x => !string.IsNullOrWhiteSpace(x.ClientId))
+                .Select(x => x.ClientId!), StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, AdminDevice> devicesByPair = serverDevices
+                .Where(x => !string.IsNullOrWhiteSpace(x.ClientId) && !string.IsNullOrWhiteSpace(x.DeviceId))
+                .GroupBy(x => LicenseKey(x.ClientId, x.DeviceId), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+            var visibleDevicePairs = new HashSet<string>(serverDevices
+                .Where(x => !string.IsNullOrWhiteSpace(x.ClientId) && !string.IsNullOrWhiteSpace(x.DeviceId))
+                .Select(x => LicenseKey(x.ClientId, x.DeviceId)), StringComparer.OrdinalIgnoreCase);
             AdminLicense[] current = licenses
-                .Where(x => !string.Equals(x.Status, "Revoked", StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.Equals(x.Status, "Active", StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(x.ClientId) && activeClientIds.Contains(x.ClientId!) &&
+                            visibleDevicePairs.Contains(LicenseKey(x.ClientId, x.DeviceId)))
                 .GroupBy(x => (x.ClientId ?? "") + "\n" + (x.DeviceId ?? ""), StringComparer.OrdinalIgnoreCase)
                 .Select(x => x.OrderByDescending(y => y.Revision).ThenByDescending(y => y.Id).First())
                 .ToArray();
@@ -204,7 +213,14 @@ public partial class LicenseManagerWindow : Window
                 LicenseGrant? grant = JsonConvert.DeserializeObject<LicenseGrant>(detail.GrantJson);
                 if (grant is not null) grants.Add(grant);
             }
-            if (grants.Count == 0) throw new InvalidDataException("На сервере нет действующих лицензий с grantJson.");
+            if (grants.Count == 0)
+            {
+                ClearPendingRegistrationImports();
+                SetManifest(new LicenseManifest { Revision = licenses.Count == 0 ? 0 : licenses.Max(x => x.Revision) }, published: true);
+                StatusText.Text = "На HonestLicenseServer нет действующих лицензий.";
+                _access.Audit("Server licenses loaded; active grants=0");
+                return;
+            }
             var manifest = new LicenseManifest
             {
                 SchemaVersion = grants.Max(x => x.SchemaVersion),
@@ -222,19 +238,22 @@ public partial class LicenseManagerWindow : Window
                     MinHonestFlowVersion = first.MinHonestFlowVersion,
                     OfflineGraceHours = first.OfflineGraceHours,
                     Features = first.Features?.Distinct().ToList() ?? [],
-                    Devices = group.Select(x => new LicensedDevice
+                    Devices = group.Select(x =>
                     {
-                        DeviceId = x.DeviceId,
-                        Name = devicesById.TryGetValue(x.DeviceId, out AdminDevice? serverDevice) ? serverDevice.Name ?? x.DeviceId : x.DeviceId,
-                        Address = !string.IsNullOrWhiteSpace(x.PointAddress)
-                            ? x.PointAddress
-                            : devicesById.TryGetValue(x.DeviceId, out serverDevice) ? serverDevice.Address ?? "" : "",
-                        Enabled = x.DeviceEnabled,
-                        Comment = devicesById.TryGetValue(x.DeviceId, out serverDevice) ? serverDevice.Comment ?? "" : ""
+                        devicesByPair.TryGetValue(LicenseKey(x.ClientId, x.DeviceId), out AdminDevice? serverDevice);
+                        return new LicensedDevice
+                        {
+                            DeviceId = x.DeviceId,
+                            Name = serverDevice?.Name ?? x.DeviceId,
+                            Address = serverDevice?.Address ?? x.PointAddress ?? "",
+                            Enabled = x.DeviceEnabled,
+                            Comment = serverDevice?.Comment ?? ""
+                        };
                     }).ToList()
                 });
             }
-            foreach (LicenseGrant grant in grants.Where(x => x.OperatorDevice)
+            foreach (LicenseGrant grant in grants.Where(x => x.OperatorDevice &&
+                         visibleDevicePairs.Contains(LicenseKey(x.ClientId, x.DeviceId)))
                          .GroupBy(x => x.DeviceId, StringComparer.OrdinalIgnoreCase).Select(x => x.First()))
                 manifest.OperatorDevices.Add(new OperatorDevice { DeviceId = grant.DeviceId, Name = grant.DeviceId, Enabled = grant.DeviceEnabled });
             ClearPendingRegistrationImports();
@@ -298,6 +317,8 @@ public partial class LicenseManagerWindow : Window
             StatusText.Text = stage + "…";
             _manifest.Clients = _licenses.ToList();
             LicenseDocumentService.Validate(_manifest);
+            if (_manifest.Clients.Any(x => x.Devices is null || x.Devices.Count == 0))
+                throw new InvalidDataException("У каждого публикуемого клиента должно быть хотя бы одно зарегистрированное устройство.");
             stage = "Сохранение и подпись licenses.json";
             StatusText.Text = stage + "…";
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
@@ -644,8 +665,64 @@ public partial class LicenseManagerWindow : Window
 
     private void LicensesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => LoadLicense(SelectedLicense);
     private void ApplyLicenseButton_Click(object sender, RoutedEventArgs e) => ApplySelected();
-    private void AddDeviceButton_Click(object sender, RoutedEventArgs e) => _devices.Add(new LicensedDevice { Enabled = true });
-    private void DeleteDeviceButton_Click(object sender, RoutedEventArgs e) { if (DevicesGrid.SelectedItem is LicensedDevice value) _devices.Remove(value); }
+    private void AddDeviceButton_Click(object sender, RoutedEventArgs e) =>
+        ShowWarning("Устройство добавляется через заявку регистрации и Approve. Локальный Device без записи на HonestLicenseServer не создан.");
+    private async void DeleteDeviceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        if (DevicesGrid.SelectedItem is not LicensedDevice value || SelectedLicense is not { } license) return;
+        if (System.Windows.MessageBox.Show(this,
+                $"Удалить устройство «{value.Name}»? Оно будет помечено как Deleted на HonestLicenseServer.",
+                "Подтверждение", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+
+        if (string.IsNullOrWhiteSpace(value.DeviceId) || string.IsNullOrWhiteSpace(license.ClientId))
+        {
+            _devices.Remove(value);
+            license.Devices = _devices.ToList();
+            StatusText.Text = "Локальный черновик устройства удалён.";
+            return;
+        }
+
+        SetBusy(true, "Удаление устройства на HonestLicenseServer…");
+        try
+        {
+            HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
+                () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            IReadOnlyList<AdminDevice> serverDevices = await api.GetDevicesAsync(
+                license.ClientId, cts.Token, includeDeleted: true);
+            AdminDevice? serverDevice = serverDevices.SingleOrDefault(x =>
+                string.Equals(x.DeviceId, value.DeviceId, StringComparison.OrdinalIgnoreCase));
+
+            if (serverDevice is not null &&
+                !string.Equals(serverDevice.Status, "Deleted", StringComparison.OrdinalIgnoreCase))
+            {
+                await api.UpdateDeviceAsync(serverDevice.Id, new
+                {
+                    name = serverDevice.Name ?? value.Name ?? value.DeviceId,
+                    address = serverDevice.Address,
+                    comment = serverDevice.Comment,
+                    status = "Deleted"
+                }, cts.Token);
+            }
+
+            _devices.Remove(value);
+            license.Devices = _devices.ToList();
+            StatusText.Text = serverDevice is null
+                ? "Устройства не было на сервере; оно удалено из локального черновика."
+                : "Устройство помечено Deleted на HonestLicenseServer.";
+            _access.Audit($"Device soft-deleted; client={license.ClientId}; device={value.DeviceId}");
+        }
+        catch (Exception ex)
+        {
+            _access.Audit($"Device soft-delete failed; client={license.ClientId}; device={value.DeviceId}");
+            ShowWarning("Не удалось удалить устройство на HonestLicenseServer:\n" + ex.Message);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
 
     private void AddLicenseButton_Click(object sender, RoutedEventArgs e)
     {
@@ -665,12 +742,7 @@ public partial class LicenseManagerWindow : Window
 
     private void DeleteLicenseButton_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedLicense is not { } license) return;
-        if (System.Windows.MessageBox.Show(this, $"Удалить лицензию «{license.DisplayName}»?",
-                "Подтверждение", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        _licenses.Remove(license);
-        LicensesGrid.SelectedItem = _licenses.FirstOrDefault();
-        RefreshManifest();
+        ShowWarning("Отзыв опубликованных лицензий из этого окна пока не реализован. Локальные данные и HonestLicenseServer не изменены.");
     }
 
     private void AddMissingButton_Click(object sender, RoutedEventArgs e)

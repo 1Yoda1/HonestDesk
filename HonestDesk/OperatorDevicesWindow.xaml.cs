@@ -29,8 +29,12 @@ public partial class OperatorDevicesWindow : Window
 
     private void DeleteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (DevicesGrid.SelectedItem is OperatorDevice device)
-            _devices.Remove(device);
+        System.Windows.MessageBox.Show(
+            this,
+            "Отзыв опубликованного operator grant пока не реализован. Список не изменён.",
+            "HonestDesk",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 
     private void ApplyButton_Click(object sender, RoutedEventArgs e)

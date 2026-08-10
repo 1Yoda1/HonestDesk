@@ -15,9 +15,9 @@ namespace HonestDesk;
 
 public partial class MainWindow : Window
 {
+    private readonly AppLogger _logger = new();
     private readonly SettingsService _settingsService = new();
     private readonly StateService _stateService = new();
-    private readonly AppLogger _logger = new();
     private readonly RuDesktopService _ruDesktopService;
     private readonly RemoteClientConfigService _remoteClientConfigService;
     private readonly AdminAccessService _adminAccess = new();
@@ -28,7 +28,9 @@ public partial class MainWindow : Window
     private AppState _state;
     private bool _checking;
     private bool _connecting;
+    private bool _resolvingDeviceRequest;
     private bool _exitRequested;
+    private bool _startupStarted;
     private AdminEditorWindow? _adminEditor;
     private LicenseManagerWindow? _licenseManager;
     private FrameworkElement? _adminContent;
@@ -47,18 +49,61 @@ public partial class MainWindow : Window
         RequestsGrid.ItemsSource = _requests;
         BuildTray();
         ConfigureTimer();
-        Loaded += (_, _) => RestoreSelectedSection();
         ReloadRequests();
-        _logger.Info("HonestDesk WPF started");
+        if (_settingsService.LastLoadError is not null)
+            _logger.Error("Startup stage: Loading settings.json; defaults are active until settings are saved",
+                _settingsService.LastLoadError);
+        if (_stateService.LastLoadError is not null)
+            _logger.Error("Startup stage: Loading optional state.json; empty UI state is active",
+                _stateService.LastLoadError);
+        _logger.Info("Startup stage: MainWindow constructed");
     }
 
     protected override async void OnContentRendered(EventArgs e)
     {
         base.OnContentRendered(e);
-        if (string.IsNullOrWhiteSpace(_settings.ProtectedAdminApiKey))
-            ShowSettings();
-        else
-            await CheckNowAsync();
+        if (_startupStarted) return;
+        _startupStarted = true;
+        await InitializeStartupAsync();
+    }
+
+    private async Task InitializeStartupAsync()
+    {
+        SetStatus("Инициализация HonestDesk…", "#F3A847");
+        try
+        {
+            if (_settingsService.LastLoadError is not null)
+            {
+                SetStatus("Файл настроек повреждён — требуется проверка", "#F06B78");
+                ShowWarning("Не удалось прочитать settings.json. Настройки не удалены. " +
+                            "Проверьте и сохраните их заново. Подробности записаны в журнал.");
+                ShowSettings();
+            }
+            else if (string.IsNullOrWhiteSpace(_settings.ProtectedAdminApiKey))
+            {
+                ShowSettings();
+            }
+
+            if (!string.IsNullOrWhiteSpace(_settings.ProtectedAdminApiKey))
+            {
+                SetStatus("Загрузка данных HonestLicenseServer…", "#F3A847");
+                await CheckNowAsync();
+            }
+            else
+            {
+                SetStatus("Настройте подключение к HonestLicenseServer", "#F3A847");
+            }
+
+            await RestoreSelectedSectionAsync();
+            if (!string.IsNullOrWhiteSpace(_settings.ProtectedAdminApiKey))
+                ResetTimer();
+            _logger.Info("Startup stage: Ready");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Startup stage: MainWindow initialization", ex);
+            SetStatus("Ошибка запуска. Исправьте настройки и нажмите «Обновить заявки».", "#F06B78");
+        }
     }
 
     protected override void OnStateChanged(EventArgs e)
@@ -90,7 +135,8 @@ public partial class MainWindow : Window
         menu.Items.Add("Настройки", null, (_, _) => Dispatcher.Invoke(ShowSettings));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) => Dispatcher.Invoke(ExitApplication));
-        var iconResource = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/Resources/hd.ico"))
+        var iconResource = System.Windows.Application.GetResourceStream(
+            new Uri("pack://application:,,,/HonestDesk;component/Resources/hd.ico"))
             ?? throw new InvalidOperationException("HonestDesk tray icon resource was not found.");
         using var trayIcon = new System.Drawing.Icon(iconResource.Stream);
         _notifyIcon.Icon = (System.Drawing.Icon)trayIcon.Clone();
@@ -104,7 +150,6 @@ public partial class MainWindow : Window
     private void ConfigureTimer()
     {
         _timer.Tick += async (_, _) => await CheckNowAsync();
-        ResetTimer();
     }
 
     private void ResetTimer()
@@ -129,26 +174,23 @@ public partial class MainWindow : Window
             IReadOnlyList<AdminDeviceRequest> devices = await api.GetDeviceRequestsAsync("Pending", cts.Token);
             IReadOnlyList<AdminDevice> registeredDevices = await api.GetDevicesAsync(null, cts.Token);
             IReadOnlyList<AdminLicense> licenses = await api.GetLicensesAsync(null, cts.Token);
-            var licensedDeviceIds = new HashSet<string>(licenses
-                .Where(x => !string.Equals(x.Status, "Revoked", StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(x.Status, "Superseded", StringComparison.OrdinalIgnoreCase) &&
-                            !string.IsNullOrWhiteSpace(x.DeviceId))
-                .Select(x => x.DeviceId!), StringComparer.OrdinalIgnoreCase);
+            var licensedDeviceKeys = new HashSet<string>(licenses
+                .Where(x => string.Equals(x.Status, "Active", StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(x.ClientId) && !string.IsNullOrWhiteSpace(x.DeviceId))
+                .Select(x => ServerEntityKey(x.ClientId, x.DeviceId)), StringComparer.OrdinalIgnoreCase);
             Dictionary<string, AdminDevice> registeredByExternalId = registeredDevices
-                .Where(x => !string.IsNullOrWhiteSpace(x.DeviceId))
-                .GroupBy(x => x.DeviceId!, StringComparer.OrdinalIgnoreCase)
+                .Where(x => !string.IsNullOrWhiteSpace(x.ClientId) && !string.IsNullOrWhiteSpace(x.DeviceId))
+                .GroupBy(x => ServerEntityKey(x.ClientId, x.DeviceId), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
             List<HelpRequest> incoming = support.Select(x => MapSupportRequest(x, registeredByExternalId))
                 .Concat(devices.Select(MapDeviceRequest))
                 .Concat(registeredDevices
                     .Where(x => string.Equals(x.Status, "Active", StringComparison.OrdinalIgnoreCase) &&
-                                !string.IsNullOrWhiteSpace(x.DeviceId) && !licensedDeviceIds.Contains(x.DeviceId!))
+                                !string.IsNullOrWhiteSpace(x.ClientId) && !string.IsNullOrWhiteSpace(x.DeviceId) &&
+                                !licensedDeviceKeys.Contains(ServerEntityKey(x.ClientId, x.DeviceId)))
                     .Select(MapUnlicensedDevice)).ToList();
             Dictionary<string, HelpRequest> existing = _state.Requests
                 .ToDictionary(x => x.Uid, StringComparer.Ordinal);
-            foreach (HelpRequest request in incoming)
-                if (existing.TryGetValue(request.Uid, out HelpRequest? previous))
-                    request.IsHandled = previous.IsHandled;
             List<HelpRequest> newRequests = incoming
                 .Where(x => !existing.ContainsKey(x.Uid)).ToList();
             _state.Requests = incoming;
@@ -182,7 +224,7 @@ public partial class MainWindow : Window
 
     private static HelpRequest MapSupportRequest(AdminSupportRequest value, IReadOnlyDictionary<string, AdminDevice> devices)
     {
-        devices.TryGetValue(value.ExternalDeviceId ?? "", out AdminDevice? device);
+        devices.TryGetValue(ServerEntityKey(value.ClientId, value.ExternalDeviceId), out AdminDevice? device);
         return new HelpRequest
         {
         Uid = "api-support-" + value.Id,
@@ -208,12 +250,14 @@ public partial class MainWindow : Window
         MessageId = value.Id.ToString(),
         Subject = "Регистрация устройства",
         ClientId = value.ClientId ?? "",
-        ClientName = value.ClientName ?? value.ClientId ?? "Клиент HonestFlow",
-        MachineName = value.RequestedName ?? value.DeviceId ?? "",
+        ClientName = value.ClientName ?? "",
+        InnMasked = value.ClientInn ?? "",
+        MachineName = value.RequestedName ?? "",
         DeviceId = value.DeviceId ?? "",
-        Address = value.Address ?? "",
+        Address = value.RequestedAddress ?? "",
+        HonestFlowVersion = value.HonestFlowVersion ?? "",
         ProblemType = "Регистрация устройства / доступ к HonestFlow",
-        Message = $"DeviceId: {value.DeviceId}\nАдрес: {value.Address}\nСтатус: {value.Status}\n{value.Comment}",
+        Message = $"Статус: {DisplayValue(value.Status)}\nКомментарий: {DisplayValue(value.Comment)}",
         CreatedAt = value.RequestedAtUtc,
         IsHandled = !string.Equals(value.Status, "Pending", StringComparison.OrdinalIgnoreCase)
     };
@@ -271,14 +315,36 @@ public partial class MainWindow : Window
         var request = SelectedRequest();
         DetailsText.Text = request is null
             ? "Выберите заявку, чтобы увидеть подробности"
-            : $"Клиент: {request.ClientName}\nИНН: {request.InnMasked}\nАдрес: {request.Address}\n" +
-              $"Компьютер: {request.MachineName}  ·  {request.WindowsUser}\nRuDesktop ID: {request.RuDesktopId}\n" +
-              $"HonestFlow: {request.HonestFlowVersion}\nТип проблемы: {request.ProblemType}\n" +
-              $"Получено: {request.CreatedAt:dd.MM.yyyy HH:mm:ss zzz}\n\n{request.Message}";
+            : BuildRequestDetails(request);
         DetailsText.Foreground = request is null
             ? (System.Windows.Media.Brush)FindResource("Muted")
             : (System.Windows.Media.Brush)FindResource("Ink");
     }
+
+    private static string BuildRequestDetails(HelpRequest request)
+    {
+        if (TryGetDeviceRequestId(request, out _))
+        {
+            string requestedAt = request.CreatedAt == default
+                ? "—"
+                : request.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss");
+            return $"Клиент: {DisplayValue(request.ClientName)}\n" +
+                   $"ИНН: {DisplayValue(request.InnMasked)}\n" +
+                   $"Адрес: {DisplayValue(request.Address)}\n" +
+                   $"Компьютер: {DisplayValue(request.MachineName)}\n" +
+                   $"Device ID: {DisplayValue(request.DeviceId)}\n" +
+                   $"Версия HonestFlow: {DisplayValue(request.HonestFlowVersion)}\n" +
+                   $"Дата заявки: {requestedAt}\n\n{request.Message}";
+        }
+
+        return $"Клиент: {request.ClientName}\nИНН: {request.InnMasked}\nАдрес: {request.Address}\n" +
+               $"Компьютер: {request.MachineName}  ·  {request.WindowsUser}\nRuDesktop ID: {request.RuDesktopId}\n" +
+               $"HonestFlow: {request.HonestFlowVersion}\nТип проблемы: {request.ProblemType}\n" +
+               $"Получено: {request.CreatedAt:dd.MM.yyyy HH:mm:ss zzz}\n\n{request.Message}";
+    }
+
+    private static string DisplayValue(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
 
     private async Task ConnectSelectedAsync()
     {
@@ -448,9 +514,27 @@ public partial class MainWindow : Window
 
     private static string NormalizeApiName(string? value) => (value ?? "").Replace("-", "").Replace("_", "").ToUpperInvariant();
 
-    private void OpenConfigEditorButton_Click(object sender, RoutedEventArgs e) => OpenAdminEditor();
+    private static string ServerEntityKey(string? clientId, string? deviceId) =>
+        (clientId ?? "") + "\n" + (deviceId ?? "");
 
-    private void OpenAdminEditor() => _ = OpenAdminEditorAsync();
+    private async void OpenConfigEditorButton_Click(object sender, RoutedEventArgs e) =>
+        await OpenAdminEditorSafelyAsync();
+
+    private async void OpenAdminEditor() => await OpenAdminEditorSafelyAsync();
+
+    private async Task OpenAdminEditorSafelyAsync()
+    {
+        try
+        {
+            await OpenAdminEditorAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Opening admin editor", ex);
+            SetStatus("Не удалось открыть раздел клиентов", "#F06B78");
+            ShowWarning("Не удалось открыть раздел клиентов. Подробности записаны в журнал.");
+        }
+    }
 
     private async Task OpenAdminEditorAsync()
     {
@@ -487,11 +571,23 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private async void OpenLicensesButton_Click(object sender, RoutedEventArgs e)
+    private async void OpenLicensesButton_Click(object sender, RoutedEventArgs e) =>
+        await OpenLicensesSafelyAsync();
+
+    private async Task OpenLicensesSafelyAsync()
     {
-        if (!EnsureAdminSession()) return;
-        if (_adminEditor is null) await OpenAdminEditorAsync();
-        _adminEditor?.RequestLicenses();
+        try
+        {
+            if (!EnsureAdminSession()) return;
+            if (_adminEditor is null) await OpenAdminEditorAsync();
+            _adminEditor?.RequestLicenses();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Opening license manager", ex);
+            SetStatus("Не удалось открыть раздел лицензий", "#F06B78");
+            ShowWarning("Не удалось открыть раздел лицензий. Подробности записаны в журнал.");
+        }
     }
 
     private void ShowLicenses(IReadOnlyDictionary<string, string> clients, SupportMailSettings mailSettings)
@@ -525,7 +621,10 @@ public partial class MainWindow : Window
         ShowSection("Settings", _settingsContent);
     }
 
-    private async void OpenJournalButton_Click(object sender, RoutedEventArgs e)
+    private async void OpenJournalButton_Click(object sender, RoutedEventArgs e) =>
+        await OpenJournalAsync();
+
+    private async Task OpenJournalAsync()
     {
         var text = new System.Windows.Controls.TextBox
         {
@@ -582,14 +681,17 @@ public partial class MainWindow : Window
         SectionHost.Content = content;
     }
 
-    private void RestoreSelectedSection()
+    private async Task RestoreSelectedSectionAsync()
     {
         switch (_state.SelectedSection)
         {
-            case "Clients": _ = OpenAdminEditorAsync(); break;
-            case "Licenses": OpenLicensesButton_Click(this, new RoutedEventArgs()); break;
+            case "Clients":
+            case "Licenses":
+                _logger.Info("Startup stage: Protected section restore skipped; operator unlock is required.");
+                ShowSection("Support", null);
+                break;
             case "Settings": ShowSettingsSection(); break;
-            case "Journal": OpenJournalButton_Click(this, new RoutedEventArgs()); break;
+            case "Journal": await OpenJournalAsync(); break;
             default: ShowSection("Support", null); break;
         }
     }
@@ -598,27 +700,42 @@ public partial class MainWindow : Window
         if (SelectedRequest() is not { } request) return;
         if (TryGetDeviceRequestId(request, out int requestId))
         {
+            if (_resolvingDeviceRequest) return;
             MessageBoxResult answer = System.Windows.MessageBox.Show(this,
                 $"Одобрить регистрацию устройства «{request.MachineName}» для клиента {request.ClientName}?",
                 "HonestLicenseServer", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (answer != MessageBoxResult.Yes) return;
+            bool approved = false;
+            _resolvingDeviceRequest = true;
             try
             {
                 HonestLicenseAdminApiClient api = CreateApiClient();
                 await api.ApproveDeviceRequestAsync(requestId, request.MachineName, request.Address, null, CancellationToken.None);
+                approved = true;
                 _logger.Info($"Device request approved through API: {requestId}");
                 await IssueDeviceLicenseAsync(api, request);
-                await CheckNowAsync();
             }
             catch (Exception ex)
             {
-                _logger.Error($"Device request approval failed: {requestId}", ex);
-                System.Windows.MessageBox.Show(this, ex.Message, "Ошибка HonestLicenseServer", MessageBoxButton.OK, MessageBoxImage.Error);
+                _logger.Error(approved
+                    ? $"Device request approved but license issue failed: {requestId}"
+                    : $"Device request approval failed: {requestId}", ex);
+                string message = approved
+                    ? "Регистрация уже одобрена на HonestLicenseServer, но лицензию выдать не удалось. Повторите выдачу для устройства без лицензии.\n\n" + ex.Message
+                    : ex.Message;
+                System.Windows.MessageBox.Show(this, message, "Ошибка HonestLicenseServer", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                if (approved) await CheckNowAsync();
+                _resolvingDeviceRequest = false;
             }
             return;
         }
         if (request.Uid.StartsWith("api-unlicensed-", StringComparison.Ordinal))
         {
+            if (_resolvingDeviceRequest) return;
+            _resolvingDeviceRequest = true;
             try
             {
                 await IssueDeviceLicenseAsync(CreateApiClient(), request);
@@ -629,6 +746,25 @@ public partial class MainWindow : Window
                 _logger.Error($"Device license issue failed: {request.DeviceId}", ex);
                 System.Windows.MessageBox.Show(this, ex.Message, "Ошибка выдачи лицензии", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+            finally { _resolvingDeviceRequest = false; }
+            return;
+        }
+        if (TryGetSupportRequestId(request, out int supportRequestId))
+        {
+            if (_resolvingDeviceRequest) return;
+            _resolvingDeviceRequest = true;
+            try
+            {
+                await CreateApiClient().ResolveSupportRequestAsync(supportRequestId, CancellationToken.None);
+                _logger.Info($"Support request resolved through API: {supportRequestId}");
+                await CheckNowAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"Support request resolve failed: {supportRequestId}", ex);
+                System.Windows.MessageBox.Show(this, ex.Message, "Ошибка HonestLicenseServer", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally { _resolvingDeviceRequest = false; }
             return;
         }
         var stored = _state.Requests.FirstOrDefault(x => x.Uid == request.Uid);
@@ -664,6 +800,7 @@ public partial class MainWindow : Window
 
     private async void RejectDeviceRequestButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_resolvingDeviceRequest) return;
         if (SelectedRequest() is not { } request || !TryGetDeviceRequestId(request, out int requestId))
         {
             System.Windows.MessageBox.Show(this, "Выберите заявку регистрации устройства.", "HonestDesk", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -672,6 +809,7 @@ public partial class MainWindow : Window
         if (System.Windows.MessageBox.Show(this,
                 $"Отклонить регистрацию устройства «{request.MachineName}»?",
                 "HonestLicenseServer", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        _resolvingDeviceRequest = true;
         try
         {
             await CreateApiClient().RejectDeviceRequestAsync(requestId, "Отклонено оператором HonestDesk", CancellationToken.None);
@@ -683,12 +821,19 @@ public partial class MainWindow : Window
             _logger.Error($"Device request rejection failed: {requestId}", ex);
             System.Windows.MessageBox.Show(this, ex.Message, "Ошибка HonestLicenseServer", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+        finally { _resolvingDeviceRequest = false; }
     }
 
     private static bool TryGetDeviceRequestId(HelpRequest request, out int id)
     {
         id = 0;
         return request.Uid.StartsWith("api-device-", StringComparison.Ordinal) && int.TryParse(request.MessageId, out id);
+    }
+
+    private static bool TryGetSupportRequestId(HelpRequest request, out int id)
+    {
+        id = 0;
+        return request.Uid.StartsWith("api-support-", StringComparison.Ordinal) && int.TryParse(request.MessageId, out id);
     }
 
     private void MailButton_Click(object sender, RoutedEventArgs e)

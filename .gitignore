@@ -3,6 +3,7 @@
 **/obj/
 build-check/
 publish/
+publish-desk/
 /artifacts/
 *.user
 *.suo

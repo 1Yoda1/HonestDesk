@@ -19,8 +19,24 @@ public sealed class HonestLicenseAdminApiClient
 
     public Task<IReadOnlyList<AdminSupportRequest>> GetSupportRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminSupportRequest>("api/admin/support-requests" + Query("status", status), token);
     public Task<IReadOnlyList<AdminDeviceRequest>> GetDeviceRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminDeviceRequest>("api/admin/device-requests" + Query("status", status), token);
-    public Task<IReadOnlyList<AdminClient>> GetClientsAsync(CancellationToken token) => GetListAsync<AdminClient>("api/admin/clients", token);
-    public Task<IReadOnlyList<AdminDevice>> GetDevicesAsync(string? clientId, CancellationToken token) => GetListAsync<AdminDevice>("api/admin/devices" + Query("clientId", clientId), token);
+    public async Task<IReadOnlyList<AdminClient>> GetClientsAsync(
+        CancellationToken token,
+        bool includeInactive = false)
+    {
+        IReadOnlyList<AdminClient> clients = await GetListAsync<AdminClient>("api/admin/clients", token);
+        return includeInactive ? clients : clients.Where(x => x.IsActive).ToList();
+    }
+    public async Task<IReadOnlyList<AdminDevice>> GetDevicesAsync(
+        string? clientId,
+        CancellationToken token,
+        bool includeDeleted = false)
+    {
+        IReadOnlyList<AdminDevice> devices = await GetListAsync<AdminDevice>(
+            "api/admin/devices" + Query("clientId", clientId), token);
+        return includeDeleted
+            ? devices
+            : devices.Where(x => !string.Equals(x.Status, "Deleted", StringComparison.OrdinalIgnoreCase)).ToList();
+    }
     public Task<IReadOnlyList<AdminLicense>> GetLicensesAsync(string? clientId, CancellationToken token) => GetListAsync<AdminLicense>("api/admin/licenses" + Query("clientId", clientId), token);
     public async Task<AdminLicenseDetail> GetLicenseAsync(int id, CancellationToken token)
     {
@@ -41,13 +57,21 @@ public sealed class HonestLicenseAdminApiClient
     }
     public Task ApproveDeviceRequestAsync(int id, string? name, string? address, string? comment, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/device-requests/{id}/approve", new { name, address, comment }, token);
     public Task RejectDeviceRequestAsync(int id, string? comment, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/device-requests/{id}/reject", new { comment }, token);
+    public Task ResolveSupportRequestAsync(int id, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/support-requests/{id}/resolve", null, token);
     public Task UpdateClientAsync(string clientId, object request, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}", request, token);
     public Task CreateClientAsync(object request, CancellationToken token) => SendAsync(HttpMethod.Post, "api/admin/clients", request, token);
     public Task UpdateDeviceAsync(int id, object request, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/devices/{id}", request, token);
     public Task PutVersionAsync(string application, string version, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/versions/{Uri.EscapeDataString(application)}", new { currentVersion = version }, token);
     public Task PutComponentOverrideAsync(string clientId, string component, string? version, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}/component-versions/{Uri.EscapeDataString(component)}", new { requiredVersion = version }, token);
-    public Task PutClientIntegrationSettingsAsync(string clientId, string? identificationCode, string? chzToken, CancellationToken token) =>
-        SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}/integration-settings", new { identificationCode, chzToken }, token);
+    public Task PutClientIntegrationSettingsAsync(
+        string clientId,
+        string? identificationCode,
+        string? chzToken,
+        bool ruDesktopEnabled,
+        bool ruDesktopAutoOfferPasswordSetup,
+        CancellationToken token) =>
+        SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}/integration-settings",
+            new { identificationCode, chzToken, ruDesktopEnabled, ruDesktopAutoOfferPasswordSetup }, token);
     public Task RevokeLicenseAsync(int id, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/licenses/{id}/revoke", null, token);
     public Task PublishLicenseAsync(string grantBase64, string signatureBase64, string keyId, CancellationToken token) => SendAsync(HttpMethod.Post, "api/admin/licenses", new { grantBase64, signatureBase64, keyId }, token);
 
@@ -84,7 +108,24 @@ public sealed class HonestLicenseAdminApiException(HttpStatusCode statusCode, st
 { public HttpStatusCode StatusCode { get; } = statusCode; public string ResponseBody { get; } = responseBody; }
 
 public sealed class AdminSupportRequest { public int Id { get; set; } public string? ClientId { get; set; } public string? ExternalDeviceId { get; set; } public string? Subject { get; set; } public string? Message { get; set; } public string? Contact { get; set; } public string? HonestFlowVersion { get; set; } public string? Status { get; set; } public DateTimeOffset CreatedAtUtc { get; set; } }
-public sealed class AdminDeviceRequest { public int Id { get; set; } public string? ClientId { get; set; } public string? ClientName { get; set; } public string? DeviceId { get; set; } public string? RequestedName { get; set; } public string? Address { get; set; } public string? Status { get; set; } public DateTimeOffset RequestedAtUtc { get; set; } public DateTimeOffset? ResolvedAtUtc { get; set; } public string? Comment { get; set; } }
+public sealed class AdminDeviceRequest
+{
+    public int Id { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientName { get; set; }
+    [JsonProperty("clientInn")]
+    public string? ClientInn { get; set; }
+    public string? DeviceId { get; set; }
+    public string? RequestedName { get; set; }
+    [JsonProperty("requestedAddress")]
+    public string? RequestedAddress { get; set; }
+    [JsonProperty("honestFlowVersion")]
+    public string? HonestFlowVersion { get; set; }
+    public string? Status { get; set; }
+    public DateTimeOffset RequestedAtUtc { get; set; }
+    public DateTimeOffset? ResolvedAtUtc { get; set; }
+    public string? Comment { get; set; }
+}
 public sealed class AdminClient { public string? ClientId { get; set; } public string? Name { get; set; } public string? Inn { get; set; } public string? Architecture { get; set; } public bool IsActive { get; set; } public bool HasLmDatabaseBackup { get; set; } public int DeviceCount { get; set; } public int ActiveDeviceCount { get; set; } public int LicenseCount { get; set; } public bool CredentialConfigured { get; set; } }
 public sealed class AdminDevice { public int Id { get; set; } public string? ClientId { get; set; } public string? ClientName { get; set; } public string? DeviceId { get; set; } public string? Name { get; set; } public string? Address { get; set; } public string? Comment { get; set; } public string? Status { get; set; } public DateTimeOffset RegisteredAtUtc { get; set; } }
 public sealed class AdminLicense { public int Id { get; set; } public string? ClientId { get; set; } public string? ClientName { get; set; } public string? DeviceId { get; set; } public long Revision { get; set; } public string? KeyId { get; set; } public string? Status { get; set; } public DateTimeOffset IssuedAtUtc { get; set; } public DateTimeOffset ValidUntilUtc { get; set; } }
@@ -109,4 +150,4 @@ public sealed class AdminAsset
     public string DisplaySize => SizeBytes is > 0 ? $"{SizeBytes.Value / 1024d / 1024d:N1} МБ" : "—";
 }
 public sealed class AdminComponentOverride { public string? Component { get; set; } public string? RequiredVersion { get; set; } }
-public sealed class AdminClientIntegrationSettings { public string? ClientId { get; set; } public string? IdentificationCode { get; set; } public string? ChzToken { get; set; } public bool IsConfigured { get; set; } }
+public sealed class AdminClientIntegrationSettings { public string? ClientId { get; set; } public string? IdentificationCode { get; set; } public string? ChzToken { get; set; } public bool RuDesktopEnabled { get; set; } public bool RuDesktopAutoOfferPasswordSetup { get; set; } public bool IsConfigured { get; set; } }
