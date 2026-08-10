@@ -16,11 +16,20 @@ public sealed class ClientConfiguration
     public EngineerAccessConfiguration? EngineerAccess { get; set; }
     public List<string> Tags { get; set; } = [];
     public ComponentVersions Versions { get; set; } = new();
+    public List<ClientDeviceConfiguration> Devices { get; set; } = [];
 
     public bool HasSensitiveData =>
         !string.IsNullOrWhiteSpace(Password) ||
         !string.IsNullOrWhiteSpace(Token) ||
         !string.IsNullOrWhiteSpace(RuDesktop.Password);
+}
+
+public sealed class ClientDeviceConfiguration
+{
+    public string DeviceId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Address { get; set; } = "";
+    public string Status { get; set; } = "";
 }
 
 public sealed class RuDesktopConfiguration

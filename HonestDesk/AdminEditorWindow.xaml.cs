@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using HonestDesk.Models;
 using HonestDesk.Services;
 using HonestDesk.Infrastructure;
+using HonestDesk.Infrastructure.Api;
 using Newtonsoft.Json;
 
 namespace HonestDesk;
@@ -15,7 +16,6 @@ public partial class AdminEditorWindow : Window
 {
     private readonly AdminAccessService _access;
     private readonly AppSettings _appSettings;
-    private readonly YandexDiskClient _disk = new();
     private readonly ObservableCollection<IPData> _clients = [];
     private readonly ICollectionView _clientsView;
     private VersionsData _versions = new();
@@ -26,6 +26,7 @@ public partial class AdminEditorWindow : Window
     private string _baselineJson = "";
     private bool _loaded;
     private bool _busy;
+    private readonly HashSet<string> _serverClientIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly DateTimeOffset _sessionUntilUtc;
     private readonly DispatcherTimer _sessionTimer = new() { Interval = TimeSpan.FromSeconds(10) };
 
@@ -92,46 +93,72 @@ public partial class AdminEditorWindow : Window
     private async Task LoadRemoteAsync()
     {
         if (_busy) return;
-        SetBusy(true, "Загрузка конфигурации с Яндекс.Диска…");
+        SetBusy(true, "Загрузка конфигурации с HonestLicenseServer…");
         try
         {
-            var files = await _disk.GetFilesAsync();
-            _availableVersions = _disk.BuildAvailableVersions(files);
-            FillVersionSelectors();
-            if (!files.TryGetValue("ips_encrypted.json", out var ipsUrl))
-                throw new InvalidDataException("ips_encrypted.json не найден.");
-
-            _originalIpsEncrypted = await _disk.DownloadFileContentAsync(ipsUrl);
-            string ipsJson = ConfigManager.Deobfuscate(_originalIpsEncrypted);
-            var clients = JsonConvert.DeserializeObject<List<IPData>>(ipsJson) ?? [];
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            HonestLicenseAdminApiClient api = CreateApiClient();
+            IReadOnlyList<AdminClient> serverClients = await api.GetClientsAsync(cts.Token);
+            IReadOnlyList<AdminVersion> serverVersions = await api.GetVersionsAsync(cts.Token);
+            IReadOnlyList<AdminAsset> serverAssets = await api.GetAssetsAsync(null, cts.Token);
+            AssetsGrid.ItemsSource = serverAssets
+                .OrderBy(x => x.Component).ThenByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.Architecture).ToList();
+            _serverClientIds.Clear();
+            var clients = new List<IPData>();
+            foreach (AdminClient source in serverClients)
+            {
+                string clientId = source.ClientId ?? "";
+                _serverClientIds.Add(clientId);
+                IReadOnlyList<AdminComponentOverride> overrides = await api.GetComponentOverridesAsync(clientId, cts.Token);
+                AdminClientIntegrationSettings integration = await api.GetClientIntegrationSettingsAsync(clientId, cts.Token);
+                clients.Add(new IPData
+                {
+                    ClientId = clientId,
+                    Name = source.Name ?? clientId,
+                    Inn = source.Inn ?? "",
+                    Architecture = source.Architecture ?? "x64",
+                    HasLmDatabaseBackup = source.HasLmDatabaseBackup,
+                    Password = integration.IdentificationCode ?? "",
+                    Token = integration.ChzToken ?? "",
+                    Versions = new VersionsData
+                    {
+                        LmModule = Override(overrides, "LmModule"),
+                        AtolDriver = Override(overrides, "AtolDriver"),
+                        ESM = Override(overrides, "ESM"),
+                        Controller = Override(overrides, "Controller")
+                    }
+                });
+            }
             _clients.Clear();
             foreach (var client in clients.OrderBy(x => x.Name))
                 _clients.Add(client);
 
-            if (files.TryGetValue("versions.json", out var versionsUrl))
+            _versions = new VersionsData
             {
-                _originalVersionsJson = await _disk.DownloadFileContentAsync(versionsUrl);
-                _versions = JsonConvert.DeserializeObject<VersionsData>(_originalVersionsJson) ?? new();
-            }
-            else
-            {
-                _versions = new();
-                _originalVersionsJson = JsonConvert.SerializeObject(_versions, Formatting.Indented);
-            }
-
-            if (files.TryGetValue("support_mail_encrypted.json", out var supportMailUrl))
-            {
-                string encryptedSupportMail = await _disk.DownloadFileContentAsync(supportMailUrl);
-                string supportMailJson = ConfigManager.Deobfuscate(encryptedSupportMail);
-                _supportMailSettings = JsonConvert.DeserializeObject<SupportMailSettings>(supportMailJson) ?? new();
-            }
-            ApplyRegistrationMailOverride();
+                HonestFlow = Version(serverVersions, "HonestFlow"),
+                LmModule = Version(serverVersions, "LmModule"),
+                AtolDriver = Version(serverVersions, "AtolDriver"),
+                ESM = Version(serverVersions, "ESM"),
+                Controller = Version(serverVersions, "Controller")
+            };
+            _availableVersions = new AvailableVersionsData();
+            AddAssets(_availableVersions.HonestFlow, serverAssets, "HonestFlow");
+            AddAssets(_availableVersions.LmModule, serverAssets, "LmModule");
+            AddAssets(_availableVersions.AtolDriver, serverAssets, "AtolDriver");
+            AddAssets(_availableVersions.ESM, serverAssets, "ESM");
+            AddAssets(_availableVersions.Controller, serverAssets, "Controller");
+            AddAvailable(_availableVersions.HonestFlow, _versions.HonestFlow);
+            AddAvailable(_availableVersions.LmModule, _versions.LmModule);
+            AddAvailable(_availableVersions.AtolDriver, _versions.AtolDriver);
+            AddAvailable(_availableVersions.ESM, _versions.ESM);
+            AddAvailable(_availableVersions.Controller, _versions.Controller);
+            FillVersionSelectors();
 
             LoadVersionFields();
             _baselineJson = Snapshot();
             _loaded = true;
             ClientsGrid.SelectedItem = _clients.FirstOrDefault();
-            StatusText.Text = $"Загружено клиентов: {_clients.Count}. Конфигурация открыта как черновик.";
+            StatusText.Text = $"С HonestLicenseServer загружено клиентов: {_clients.Count}; файлов в каталоге: {serverAssets.Count}.";
             DraftText.Text = "Изменений нет";
             _access.Audit($"Admin configuration loaded; clients={_clients.Count}");
         }
@@ -141,6 +168,49 @@ public partial class AdminEditorWindow : Window
             _access.Audit("Admin configuration load failed");
         }
         finally { SetBusy(false); }
+    }
+
+    private HonestLicenseAdminApiClient CreateApiClient() => new(
+        _appSettings.ApiBaseUrl,
+        () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+
+    private static string? Override(IEnumerable<AdminComponentOverride> values, string component) =>
+        values.FirstOrDefault(x => Normalize(x.Component) == Normalize(component))?.RequiredVersion;
+
+    private static string Version(IEnumerable<AdminVersion> values, string application) =>
+        values.FirstOrDefault(x => Normalize(x.Application) == Normalize(application))?.CurrentVersion ?? "";
+
+    private static string Normalize(string? value) => (value ?? "").Replace("-", "").Replace("_", "").ToUpperInvariant();
+    private static void AddAvailable(ICollection<string> target, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) && !target.Contains(value, StringComparer.OrdinalIgnoreCase)) target.Add(value);
+    }
+    private static void AddAssets(ICollection<string> target, IEnumerable<AdminAsset> assets, string component)
+    {
+        foreach (string version in assets
+                     .Where(x => Normalize(x.Component) == Normalize(component) && !string.IsNullOrWhiteSpace(x.Version))
+                     .OrderByDescending(x => x.UpdatedAtUtc)
+                     .Select(x => x.Version!)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+            target.Add(version);
+    }
+
+    private void OpenAssetLink_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not AdminAsset asset)
+        {
+            ShowValidation("Для этого файла сервер не вернул корректную ссылку.");
+            return;
+        }
+        try
+        {
+            string url = asset.EffectiveUrl;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                throw new InvalidDataException("Сервер не вернул корректную ссылку.");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception ex) { ShowValidation("Не удалось открыть ссылку: " + ex.Message); }
     }
 
     private bool FilterClient(object item)
@@ -163,6 +233,7 @@ public partial class AdminEditorWindow : Window
         InnBox.Text = client.Inn ?? "";
         SelectCombo(ArchitectureBox, client.Architecture ?? "x64");
         ClientPasswordBox.Text = client.Password ?? "";
+        ClientPasswordBox.IsEnabled = true;
         TokenBox.Text = client.Token ?? "";
         RuPasswordBox.Text = client.RuDesktop?.Password ?? "";
         RuEnabledCheck.IsChecked = client.RuDesktop?.Enabled == true;
@@ -253,10 +324,10 @@ public partial class AdminEditorWindow : Window
         FillGlobalVersions(GlobalAtolBox, _availableVersions.AtolDriver);
         FillGlobalVersions(GlobalEsmBox, _availableVersions.ESM);
         FillGlobalVersions(GlobalControllerBox, _availableVersions.Controller);
-        FillClientVersions(ClientLmVersionBox, _availableVersions.LmModule);
-        FillClientVersions(ClientAtolVersionBox, _availableVersions.AtolDriver);
-        FillClientVersions(ClientEsmVersionBox, _availableVersions.ESM);
-        FillClientVersions(ClientControllerVersionBox, _availableVersions.Controller);
+        FillClientVersions(ClientLmVersionBox, _availableVersions.LmModule, _versions.LmModule);
+        FillClientVersions(ClientAtolVersionBox, _availableVersions.AtolDriver, _versions.AtolDriver);
+        FillClientVersions(ClientEsmVersionBox, _availableVersions.ESM, _versions.ESM);
+        FillClientVersions(ClientControllerVersionBox, _availableVersions.Controller, _versions.Controller);
     }
 
     private static void FillGlobalVersions(System.Windows.Controls.ComboBox combo, IEnumerable<string> versions)
@@ -265,10 +336,10 @@ public partial class AdminEditorWindow : Window
         foreach (var version in versions) combo.Items.Add(version);
     }
 
-    private static void FillClientVersions(System.Windows.Controls.ComboBox combo, IEnumerable<string> versions)
+    private static void FillClientVersions(System.Windows.Controls.ComboBox combo, IEnumerable<string> versions, string? globalVersion)
     {
         combo.Items.Clear();
-        combo.Items.Add("Глобальная");
+        combo.Items.Add("Глобальная" + (string.IsNullOrWhiteSpace(globalVersion) ? " (не задана)" : $" ({globalVersion})"));
         foreach (var version in versions) combo.Items.Add(version);
         combo.SelectedIndex = 0;
     }
@@ -287,7 +358,7 @@ public partial class AdminEditorWindow : Window
     private static string? SelectedOverride(System.Windows.Controls.ComboBox combo)
     {
         string? value = combo.SelectedItem?.ToString();
-        return string.IsNullOrWhiteSpace(value) || value == "Глобальная" ? null : value;
+        return string.IsNullOrWhiteSpace(value) || value.StartsWith("Глобальная", StringComparison.Ordinal) ? null : value;
     }
 
     private string Snapshot() => JsonConvert.SerializeObject(new
@@ -336,55 +407,43 @@ public partial class AdminEditorWindow : Window
             ShowValidation("Изменений для публикации нет.");
             return;
         }
-        if (!YandexDiskSettings.IsConfigured)
-        {
-            var credentials = new DiskCredentialsWindow { Owner = this };
-            if (credentials.ShowDialog() != true) return;
-        }
-
         int changed = CountChangedClients(_baselineJson, current);
         var answer = System.Windows.MessageBox.Show(this,
-            $"Будет опубликована новая конфигурация.\n\nКлиентов: {_clients.Count}\nИзменённых карточек: {changed}\n" +
-            "Пароли и токены не отображаются в журнале.\n\nПродолжить?",
+            $"Изменения будут отправлены в HonestLicenseServer.\n\nКлиентов: {_clients.Count}\nИзменённых карточек: {changed}\n\nПродолжить?",
             "Подтверждение публикации", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (answer != MessageBoxResult.Yes) return;
 
-        string staging = Path.Combine(Path.GetTempPath(), "HonestDesk-admin-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(staging);
-        string ipsPath = Path.Combine(staging, "ips_encrypted.json");
-        string versionsPath = Path.Combine(staging, "versions.json");
-        string originalVersionsPath = Path.Combine(staging, "versions.original.json");
         try
         {
-            string ipsJson = JsonConvert.SerializeObject(_clients.ToList(), Formatting.Indented);
-            string versionsJson = JsonConvert.SerializeObject(_versions, Formatting.Indented);
-            File.WriteAllText(ipsPath, ConfigManager.Obfuscate(ipsJson));
-            File.WriteAllText(versionsPath, versionsJson);
-            File.WriteAllText(originalVersionsPath, _originalVersionsJson);
-
-            SetBusy(true, "Публикация версий…");
+            SetBusy(true, "Отправка конфигурации в HonestLicenseServer…");
             _access.Audit($"Admin publication started; clients={_clients.Count}; changed={changed}");
-            await _disk.UploadVersionsFileAsync(versionsPath);
-            try
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            HonestLicenseAdminApiClient api = CreateApiClient();
+            foreach (IPData client in _clients)
             {
-                StatusText.Text = "Публикация конфигурации клиентов…";
-                await _disk.UploadIpsFileAsync(ipsPath);
+                if (_serverClientIds.Contains(client.ClientId))
+                    await api.UpdateClientAsync(client.ClientId, new { client.Name, client.Inn, client.Architecture, isActive = true, client.HasLmDatabaseBackup }, cts.Token);
+                else
+                    await api.CreateClientAsync(new { client.ClientId, client.Name, login = client.ClientId, password = client.Password, client.Inn, client.Architecture, client.HasLmDatabaseBackup }, cts.Token);
+                await api.PutClientIntegrationSettingsAsync(client.ClientId, client.Password, client.Token, cts.Token);
+                await api.PutComponentOverrideAsync(client.ClientId, "LmModule", client.Versions?.LmModule, cts.Token);
+                await api.PutComponentOverrideAsync(client.ClientId, "AtolDriver", client.Versions?.AtolDriver, cts.Token);
+                await api.PutComponentOverrideAsync(client.ClientId, "ESM", client.Versions?.ESM, cts.Token);
+                await api.PutComponentOverrideAsync(client.ClientId, "Controller", client.Versions?.Controller, cts.Token);
             }
-            catch
-            {
-                StatusText.Text = "Откат versions.json после ошибки…";
-                await _disk.UploadVersionsFileAsync(originalVersionsPath);
-                throw;
-            }
-
-            _originalIpsEncrypted = File.ReadAllText(ipsPath);
-            _originalVersionsJson = versionsJson;
+            await api.PutVersionAsync("HonestFlow", _versions.HonestFlow, cts.Token);
+            await api.PutVersionAsync("LmModule", _versions.LmModule, cts.Token);
+            await api.PutVersionAsync("AtolDriver", _versions.AtolDriver, cts.Token);
+            await api.PutVersionAsync("ESM", _versions.ESM, cts.Token);
+            await api.PutVersionAsync("Controller", _versions.Controller, cts.Token);
+            _serverClientIds.Clear();
+            foreach (IPData client in _clients) _serverClientIds.Add(client.ClientId);
             _baselineJson = current;
             if (File.Exists(AppPaths.AdminDraftPath)) File.Delete(AppPaths.AdminDraftPath);
             DraftText.Text = "Все изменения опубликованы";
             StatusText.Text = $"Публикация завершена: {DateTime.Now:dd.MM.yyyy HH:mm}";
             _access.Audit($"Admin publication completed; clients={_clients.Count}; changed={changed}");
-            System.Windows.MessageBox.Show(this, "Конфигурация успешно опубликована.", "HonestDesk",
+            System.Windows.MessageBox.Show(this, "Конфигурация сохранена на HonestLicenseServer.", "HonestDesk",
                 MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -394,7 +453,6 @@ public partial class AdminEditorWindow : Window
         }
         finally
         {
-            ClearDirectory(staging);
             SetBusy(false);
         }
     }
@@ -440,7 +498,7 @@ public partial class AdminEditorWindow : Window
     private void ClearEditor()
     {
         NameBox.Clear(); ClientIdBox.Clear(); InnBox.Clear();
-        ClientPasswordBox.Clear(); TokenBox.Clear(); RuPasswordBox.Clear();
+        ClientPasswordBox.Clear(); ClientPasswordBox.IsEnabled = true; TokenBox.Clear(); RuPasswordBox.Clear();
         RuEnabledCheck.IsChecked = false; RuAutoPasswordCheck.IsChecked = false;
         BackupCheck.IsChecked = false; With1CCheck.IsChecked = false;
         ClientLmVersionBox.SelectedIndex = 0; ClientAtolVersionBox.SelectedIndex = 0;

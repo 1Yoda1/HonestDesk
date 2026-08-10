@@ -13,6 +13,8 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         Settings = settings;
+        ApiBaseUrlBox.Text = settings.ApiBaseUrl;
+        AdminApiKeyBox.Password = DpapiProtector.Unprotect(settings.ProtectedAdminApiKey);
         ServerBox.Text = settings.ImapServer;
         PortBox.Text = settings.ImapPort.ToString();
         SslCheck.IsChecked = settings.UseSsl;
@@ -52,6 +54,10 @@ public partial class SettingsWindow : Window
 
         Settings = new AppSettings
         {
+            ApiBaseUrl = string.IsNullOrWhiteSpace(ApiBaseUrlBox.Text)
+                ? "https://api.honestflow.ru/"
+                : ApiBaseUrlBox.Text.Trim(),
+            ProtectedAdminApiKey = DpapiProtector.Protect(AdminApiKeyBox.Password),
             ImapServer = ServerBox.Text.Trim(),
             ImapPort = port,
             UseSsl = SslCheck.IsChecked == true,

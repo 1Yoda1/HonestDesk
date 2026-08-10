@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using HonestDesk.Services;
 using HonestDesk.Infrastructure;
 using HonestDesk.Infrastructure.Licensing;
+using HonestDesk.Infrastructure.Api;
 using HonestDesk.Models;
 using HonestDesk.Models.Licensing;
 using Microsoft.Win32;
@@ -20,9 +21,8 @@ public partial class LicenseManagerWindow : Window
     private readonly IReadOnlyDictionary<string, string> _knownClients;
     private readonly SupportMailSettings _supportMailSettings;
     private readonly LicenseDocumentService _documents = new();
-    private readonly YandexDiskClient _disk = new();
-    private readonly IDeviceRegistrationInbox _registrationInbox = new YandexImapDeviceRegistrationInbox();
-    private readonly DeviceRegistrationBatchService _registrationBatchService = new();
+    private readonly AppSettings _appSettings = new SettingsService().Load();
+    private readonly LicenseGrantPublicationBuilder _grantBuilder = new();
     private readonly ObservableCollection<ClientLicense> _licenses = [];
     private readonly HashSet<uint> _pendingRegistrationMessageUids = [];
     private ObservableCollection<LicensedDevice> _devices = [];
@@ -180,40 +180,74 @@ public partial class LicenseManagerWindow : Window
     private async Task LoadPublishedAsync()
     {
         if (!ConfirmDiscardUnsavedRegistrationImports()) return;
-        if (string.IsNullOrWhiteSpace(PublicKeyBox.Text) || !File.Exists(PublicKeyBox.Text))
-        {
-            ShowWarning("Сначала укажите публичный ключ для проверки опубликованной лицензии.");
-            return;
-        }
-        SetBusy(true, "Загрузка опубликованной лицензии…");
-        string temporary = Path.Combine(Path.GetTempPath(), "HonestDesk-license-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(temporary);
+        SetBusy(true, "Загрузка лицензий с HonestLicenseServer…");
         try
         {
-            string pointerJson = await _disk.DownloadFileContentAsync("/licenses/licenses-current.json");
-            var pointer = JsonConvert.DeserializeObject<LicensePublicationPointer>(pointerJson)
-                          ?? throw new InvalidDataException("Некорректный указатель лицензии.");
-            string json = await _disk.DownloadFileContentAsync(pointer.VersionPath + "/licenses.json");
-            string signature = await _disk.DownloadFileContentAsync(pointer.VersionPath + "/licenses.json.sig");
-            string path = Path.Combine(temporary, "licenses.json");
-            File.WriteAllText(path, json, new UTF8Encoding(false));
-            File.WriteAllText(path + ".sig", signature, new UTF8Encoding(false));
-            LicenseManifest manifest = OpenManifestMigratingLegacyFeatures(path, path + ".sig", PublicKeyBox.Text);
+            HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
+                () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+            IReadOnlyList<AdminLicense> licenses = await api.GetLicensesAsync(null, CancellationToken.None);
+            IReadOnlyList<AdminDevice> serverDevices = await api.GetDevicesAsync(null, CancellationToken.None);
+            Dictionary<string, AdminDevice> devicesById = serverDevices
+                .Where(x => !string.IsNullOrWhiteSpace(x.DeviceId))
+                .GroupBy(x => x.DeviceId!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+            AdminLicense[] current = licenses
+                .Where(x => !string.Equals(x.Status, "Revoked", StringComparison.OrdinalIgnoreCase))
+                .GroupBy(x => (x.ClientId ?? "") + "\n" + (x.DeviceId ?? ""), StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.OrderByDescending(y => y.Revision).ThenByDescending(y => y.Id).First())
+                .ToArray();
+            var grants = new List<LicenseGrant>();
+            foreach (AdminLicense item in current)
+            {
+                AdminLicenseDetail detail = await api.GetLicenseAsync(item.Id, CancellationToken.None);
+                if (string.IsNullOrWhiteSpace(detail.GrantJson)) continue;
+                LicenseGrant? grant = JsonConvert.DeserializeObject<LicenseGrant>(detail.GrantJson);
+                if (grant is not null) grants.Add(grant);
+            }
+            if (grants.Count == 0) throw new InvalidDataException("На сервере нет действующих лицензий с grantJson.");
+            var manifest = new LicenseManifest
+            {
+                SchemaVersion = grants.Max(x => x.SchemaVersion),
+                Revision = grants.Max(x => x.Revision),
+                IssuedAtUtc = grants.Max(x => x.IssuedAtUtc),
+                ValidUntilUtc = grants.Max(x => x.ValidUntilUtc)
+            };
+            foreach (IGrouping<string, LicenseGrant> group in grants.Where(x => !x.OperatorDevice).GroupBy(x => x.ClientId, StringComparer.OrdinalIgnoreCase))
+            {
+                LicenseGrant first = group.OrderByDescending(x => x.Revision).First();
+                manifest.Clients.Add(new ClientLicense
+                {
+                    ClientId = group.Key,
+                    Enabled = first.ClientEnabled,
+                    MinHonestFlowVersion = first.MinHonestFlowVersion,
+                    OfflineGraceHours = first.OfflineGraceHours,
+                    Features = first.Features?.Distinct().ToList() ?? [],
+                    Devices = group.Select(x => new LicensedDevice
+                    {
+                        DeviceId = x.DeviceId,
+                        Name = devicesById.TryGetValue(x.DeviceId, out AdminDevice? serverDevice) ? serverDevice.Name ?? x.DeviceId : x.DeviceId,
+                        Address = !string.IsNullOrWhiteSpace(x.PointAddress)
+                            ? x.PointAddress
+                            : devicesById.TryGetValue(x.DeviceId, out serverDevice) ? serverDevice.Address ?? "" : "",
+                        Enabled = x.DeviceEnabled,
+                        Comment = devicesById.TryGetValue(x.DeviceId, out serverDevice) ? serverDevice.Comment ?? "" : ""
+                    }).ToList()
+                });
+            }
+            foreach (LicenseGrant grant in grants.Where(x => x.OperatorDevice)
+                         .GroupBy(x => x.DeviceId, StringComparer.OrdinalIgnoreCase).Select(x => x.First()))
+                manifest.OperatorDevices.Add(new OperatorDevice { DeviceId = grant.DeviceId, Name = grant.DeviceId, Enabled = grant.DeviceEnabled });
             ClearPendingRegistrationImports();
             SetManifest(manifest, published: true);
-            StatusText.Text = $"Опубликованная лицензия проверена. Revision {manifest.Revision}";
-            _access.Audit($"Published license loaded; revision={manifest.Revision}");
+            StatusText.Text = $"С HonestLicenseServer загружено grants: {grants.Count}; revision {manifest.Revision}.";
+            _access.Audit($"Server licenses loaded; grants={grants.Count}; revision={manifest.Revision}");
         }
         catch (Exception ex)
         {
             _access.Audit("Published license load failed");
             ShowWarning(ex.Message);
         }
-        finally
-        {
-            try { Directory.Delete(temporary, true); } catch { }
-            SetBusy(false);
-        }
+        finally { SetBusy(false); }
     }
 
     private static int ChangedClients(LicenseManifest before, LicenseManifest after)
@@ -249,12 +283,6 @@ public partial class LicenseManagerWindow : Window
         if (_busy) return;
         if (_publishedAwaitingMessageProcessing) { await RetryPendingMessageProcessingAsync(); return; }
         if (!ApplySelected() || !SaveSettings()) return;
-        if (!YandexDiskSettings.IsConfigured)
-        {
-            var credentials = new DiskCredentialsWindow { Owner = Owner };
-            if (credentials.ShowDialog() != true) return;
-        }
-
         LicenseManifest before = Clone(_manifest);
         byte[]? previousJson = File.Exists(_path) ? File.ReadAllBytes(_path) : null;
         byte[]? previousSignature = File.Exists(_path + ".sig") ? File.ReadAllBytes(_path + ".sig") : null;
@@ -276,27 +304,52 @@ public partial class LicenseManagerWindow : Window
             SaveSignedPreservingFeatureNames(_path, DateTimeOffset.UtcNow);
             _signedSnapshot = Snapshot();
             RefreshManifest();
-            stage = "Публикация версии и обновление licenses-current.json";
+            stage = "Публикация лицензий в HonestLicenseServer";
             StatusText.Text = stage + "…";
             _access.Audit($"License publication started; revision={_manifest.Revision}");
-            await _disk.PublishLicensesAsync(
-                _path,
-                _path + ".sig",
-                _manifest,
-                _settings.KeyId,
-                _settings.PrivateKeyPath,
-                PublicKeyBox.Text);
-            _publishedAwaitingMessageProcessing = true;
-            stage = "Пометка импортированных писем";
-            StatusText.Text = stage + "…";
-            if (pendingMessages.Length > 0)
-                await _registrationInbox.MarkProcessedAsync(_supportMailSettings, pendingMessages, CancellationToken.None);
+            IReadOnlyList<LicenseGrantPublication> grants = _grantBuilder.Build(_manifest, _settings.KeyId, _settings.PrivateKeyPath);
+            HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
+                () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+            using var publishCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            IReadOnlyList<AdminLicense> serverLicenses = await api.GetLicensesAsync(null, publishCts.Token);
+            IReadOnlyList<AdminDevice> registeredDevices = await api.GetDevicesAsync(null, publishCts.Token);
+            var registeredPairs = new HashSet<string>(registeredDevices.Select(x => LicenseKey(x.ClientId, x.DeviceId)), StringComparer.OrdinalIgnoreCase);
+            var alreadyPublished = new HashSet<string>(serverLicenses
+                .Where(x => x.Revision == _manifest.Revision && !string.Equals(x.Status, "Revoked", StringComparison.OrdinalIgnoreCase))
+                .Select(x => LicenseKey(x.ClientId, x.DeviceId)), StringComparer.OrdinalIgnoreCase);
+            int completed = 0, skipped = 0, skippedOperatorPairs = 0;
+            foreach (LicenseGrantPublication grant in grants)
+            {
+                LicenseGrant payload = JsonConvert.DeserializeObject<LicenseGrant>(Encoding.UTF8.GetString(grant.GrantBytes))
+                    ?? throw new InvalidDataException("Не удалось прочитать grant перед публикацией.");
+                string targetKey = LicenseKey(payload.ClientId, payload.DeviceId);
+                if (!registeredPairs.Contains(targetKey))
+                {
+                    if (payload.OperatorDevice)
+                    {
+                        skippedOperatorPairs++;
+                        continue;
+                    }
+                    throw new InvalidDataException($"Устройство {payload.DeviceId} не зарегистрировано за клиентом {payload.ClientId} на HonestLicenseServer.");
+                }
+                if (alreadyPublished.Contains(targetKey))
+                {
+                    skipped++;
+                    continue;
+                }
+                LicenseSignatureEnvelope envelope = JsonConvert.DeserializeObject<LicenseSignatureEnvelope>(Encoding.UTF8.GetString(grant.SignatureBytes))
+                    ?? throw new InvalidDataException("Не удалось прочитать подпись grant.");
+                StatusText.Text = $"HonestLicenseServer: {completed + skipped + 1}/{grants.Count}…";
+                await PublishGrantWithRetryAsync(api, grant, envelope, publishCts.Token);
+                completed++;
+                await Task.Delay(100, publishCts.Token);
+            }
             _pendingRegistrationMessageUids.Clear();
             _hasUnsavedRegistrationImports = false;
             _publishedBase = Clone(_manifest);
             _publishedAwaitingMessageProcessing = false;
-            StatusText.Text = $"Готово: revision {_manifest.Revision} сохранена, подписана и опубликована. Обработано писем: {pendingMessages.Length}.";
-            _access.Audit($"License publication completed; revision={_manifest.Revision}; messages={pendingMessages.Length}");
+            StatusText.Text = $"Готово: revision {_manifest.Revision}; отправлено: {completed}; уже было: {skipped}; неприменимых операторских связей пропущено: {skippedOperatorPairs}.";
+            _access.Audit($"License publication completed; revision={_manifest.Revision}; sent={completed}; skipped={skipped}; operatorPairsSkipped={skippedOperatorPairs}");
         }
         catch (Exception ex)
         {
@@ -317,24 +370,36 @@ public partial class LicenseManagerWindow : Window
         finally { SetBusy(false); }
     }
 
+    private static string LicenseKey(string? clientId, string? deviceId) => (clientId ?? "") + "\n" + (deviceId ?? "");
+
+    private static async Task PublishGrantWithRetryAsync(
+        HonestLicenseAdminApiClient api,
+        LicenseGrantPublication grant,
+        LicenseSignatureEnvelope envelope,
+        CancellationToken token)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await api.PublishLicenseAsync(Convert.ToBase64String(grant.GrantBytes), envelope.Signature, envelope.KeyId, token);
+                return;
+            }
+            catch (HonestLicenseAdminApiException ex) when (
+                attempt < 5 && (ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
+                                ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests ||
+                                (int)ex.StatusCode >= 500) &&
+                !ex.ResponseBody.Contains("signing-key-not-configured", StringComparison.OrdinalIgnoreCase))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt - 1)), token);
+            }
+        }
+    }
+
     private async Task RetryPendingMessageProcessingAsync()
     {
-        SetBusy(true, "Повторная обработка импортированных писем…");
-        try
-        {
-            uint[] pending = _pendingRegistrationMessageUids.ToArray();
-            if (pending.Length > 0)
-                await _registrationInbox.MarkProcessedAsync(_supportMailSettings, pending, CancellationToken.None);
-            _pendingRegistrationMessageUids.Clear();
-            _hasUnsavedRegistrationImports = false;
-            _publishedAwaitingMessageProcessing = false;
-            StatusText.Text = $"Готово: revision {_manifest.Revision} опубликована; обработано писем: {pending.Length}.";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = "Лицензия уже опубликована, но письма всё ещё не обработаны: " + ex.Message;
-        }
-        finally { SetBusy(false); }
+        await Task.CompletedTask;
+        _publishedAwaitingMessageProcessing = false;
     }
     private static void RestoreLocalFile(string path, byte[]? content)
     {
@@ -353,59 +418,42 @@ public partial class LicenseManagerWindow : Window
     private async Task ImportRegistrationRequestsAsync()
     {
         if (_busy || !ApplySelected()) return;
-        if (string.IsNullOrWhiteSpace(_supportMailSettings.SenderEmail) ||
-            string.IsNullOrWhiteSpace(_supportMailSettings.SenderPassword))
-        {
-            ShowWarning(
-                "Не настроена почта для импорта заявок устройств.\n\n" +
-                "Откройте настройки HonestDesk и заполните отдельный блок «Почта заявок лицензий», " +
-                "или заполните эти реквизиты в support_mail_encrypted.json.");
-            return;
-        }
         if (_manifest.Clients == null || _manifest.Clients.Count == 0)
         {
             ShowWarning("Сначала откройте или создайте licenses.json с клиентами.");
             return;
         }
 
-        SetBusy(true, "Получение заявок регистрации устройств…");
-        ImportRegistrationRequestsButton.IsEnabled = false;
+        SetBusy(true, "Получение устройств с HonestLicenseServer…");
         try
         {
-            DeviceRegistrationInboxResult inbox =
-                await _registrationInbox.ReadPendingAsync(_supportMailSettings, CancellationToken.None);
-            DeviceRegistrationBatchPlan plan = _registrationBatchService.BuildPlan(_manifest, inbox.Items);
-
-            if (plan.Items.Count == 0 && inbox.InvalidMessageCount == 0)
+            HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
+                () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+            IReadOnlyList<AdminDevice> devices = await api.GetDevicesAsync(null, CancellationToken.None);
+            int added = 0, updated = 0;
+            foreach (AdminDevice source in devices.Where(x => string.Equals(x.Status, "Active", StringComparison.OrdinalIgnoreCase)))
             {
-                StatusText.Text = "Новых заявок регистрации нет.";
-                System.Windows.MessageBox.Show(this,
-                    "Новых заявок регистрации нет.",
-                    "Импорт заявок", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
+                ClientLicense? client = _manifest.Clients.FirstOrDefault(x => string.Equals(x.ClientId, source.ClientId, StringComparison.OrdinalIgnoreCase));
+                if (client is null || string.IsNullOrWhiteSpace(source.DeviceId)) continue;
+                client.Devices ??= [];
+                LicensedDevice? target = client.Devices.FirstOrDefault(x => string.Equals(x.DeviceId, source.DeviceId, StringComparison.OrdinalIgnoreCase));
+                if (target is null)
+                {
+                    client.Devices.Add(new LicensedDevice { DeviceId = source.DeviceId, Name = source.Name ?? "", Address = source.Address ?? "", Comment = source.Comment ?? "", Enabled = true });
+                    added++;
+                }
+                else
+                {
+                    target.Name = source.Name ?? target.Name;
+                    target.Address = source.Address ?? target.Address;
+                    target.Comment = source.Comment ?? target.Comment;
+                    updated++;
+                }
             }
-
-            string preview = _registrationBatchService.BuildPreview(plan, inbox.InvalidMessageCount);
-            if (System.Windows.MessageBox.Show(this, preview, "Импорт заявок устройств",
-                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-            {
-                StatusText.Text = "Импорт заявок отменён.";
-                return;
-            }
-
-            _registrationBatchService.Apply(_manifest, plan);
             RefreshLicenseCollection();
-
-            foreach (uint messageUid in plan.ProcessedMessageUids)
-                _pendingRegistrationMessageUids.Add(messageUid);
-            _hasUnsavedRegistrationImports = _pendingRegistrationMessageUids.Count > 0;
-
-
-            StatusText.Text = $"Добавлено устройств: {plan.NewDeviceCount}; дозаполнено адресов: {plan.AddressUpdateCount}. Сохраните и подпишите licenses.json.";
-            _access.Audit($"License registration requests imported; newDevices={plan.NewDeviceCount}; addressUpdates={plan.AddressUpdateCount}");
-            System.Windows.MessageBox.Show(this,
-                $"Добавлено устройств: {plan.NewDeviceCount}.\nДозаполнено адресов: {plan.AddressUpdateCount}.\n\nПисьма будут помечены обработанными только после успешного сохранения и подписи.",
-                "Импорт завершён", MessageBoxButton.OK, MessageBoxImage.Information);
+            _hasUnsavedRegistrationImports = added > 0 || updated > 0;
+            StatusText.Text = $"С сервера добавлено устройств: {added}; обновлено: {updated}.";
+            _access.Audit($"Server devices imported; added={added}; updated={updated}");
         }
         catch (Exception ex)
         {
@@ -415,7 +463,6 @@ public partial class LicenseManagerWindow : Window
         }
         finally
         {
-            ImportRegistrationRequestsButton.IsEnabled = true;
             SetBusy(false);
         }
     }
@@ -448,7 +495,6 @@ public partial class LicenseManagerWindow : Window
     {
         _busy = busy;
         PublishButton.IsEnabled = !busy;
-        ImportRegistrationRequestsButton.IsEnabled = !busy;
         if (status is not null) StatusText.Text = status;
     }
 
@@ -680,7 +726,6 @@ public partial class LicenseManagerWindow : Window
     private async void LoadPublishedButton_Click(object sender, RoutedEventArgs e) => await LoadPublishedAsync();
     private void SaveDraftButton_Click(object sender, RoutedEventArgs e) => SaveDraft();
     private async void SaveAndPublishButton_Click(object sender, RoutedEventArgs e) => await SaveAndPublishAsync();
-    private async void ImportRegistrationRequestsButton_Click(object sender, RoutedEventArgs e) => await ImportRegistrationRequestsAsync();
     private void PrivateKeyBrowse_Click(object sender, RoutedEventArgs e) { if (PickKey("Выберите закрытый ключ") is { } path) PrivateKeyBox.Text = path; }
     private void PublicKeyBrowse_Click(object sender, RoutedEventArgs e) { if (PickKey("Выберите публичный ключ") is { } path) PublicKeyBox.Text = path; }
 

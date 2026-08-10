@@ -28,6 +28,18 @@
             <StackPanel Margin="28,24">
                 <Border Style="{StaticResource Card}" Margin="0,0,0,18">
                     <StackPanel>
+                        <TextBlock Text="HonestLicenseServer" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="Единый источник заявок, клиентов, устройств, версий и лицензий. Admin key хранится через DPAPI."
+                                   Foreground="{StaticResource Muted}" FontSize="12" Margin="0,3,0,18" TextWrapping="Wrap"/>
+                        <TextBlock Text="API URL" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <TextBox x:Name="ApiBaseUrlBox" Margin="0,0,0,14"/>
+                        <TextBlock Text="X-Admin-Key" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <PasswordBox x:Name="AdminApiKeyBox"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,18" Visibility="Collapsed">
+                    <StackPanel>
                         <TextBlock Text="Почтовый ящик" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Text="HonestDesk читает только выделенную папку заявок."
                                    Foreground="{StaticResource Muted}" FontSize="12" Margin="0,3,0,18"/>
@@ -72,7 +84,7 @@
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource Card}" Margin="0,0,0,18">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,18" Visibility="Collapsed">
                     <StackPanel>
                         <TextBlock Text="Почта заявок лицензий" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Text="Отдельный ящик для писем [HONESTFLOW-DEVICE-REGISTRATION]. Если оставить пустым, будет использована почта из support_mail_encrypted.json."

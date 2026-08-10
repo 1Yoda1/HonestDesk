@@ -227,10 +227,12 @@
                         <Grid Margin="0,0,0,6">
                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
                             <Button Style="{StaticResource SoftButton}" Content="Копировать ID" Padding="8,10" Click="CopyIdButton_Click"/>
-                            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Письмо" Padding="8,10" Click="MailButton_Click"/>
+                            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Детали" Padding="8,10" Click="MailButton_Click"/>
                         </Grid>
-                        <Button Style="{StaticResource SoftButton}" Content="Пометить обработанной"
-                                Click="MarkHandledButton_Click" Padding="14,9"/>
+                        <Button Style="{StaticResource SoftButton}" Content="Обработать / одобрить"
+                                Click="MarkHandledButton_Click" Padding="14,9" Margin="0,0,0,6"/>
+                        <Button Style="{StaticResource SoftButton}" Content="Отклонить регистрацию"
+                                Click="RejectDeviceRequestButton_Click" Padding="14,9"/>
                     </StackPanel>
                 </Border>
             </Grid>

@@ -7,6 +7,8 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using HonestDesk.Models;
 using HonestDesk.Services;
+using HonestDesk.Infrastructure.Api;
+using HonestDesk.Infrastructure.Licensing;
 using Forms = System.Windows.Forms;
 
 namespace HonestDesk;
@@ -18,7 +20,6 @@ public partial class MainWindow : Window
     private readonly AppLogger _logger = new();
     private readonly RuDesktopService _ruDesktopService;
     private readonly RemoteClientConfigService _remoteClientConfigService;
-    private readonly MaxInboxImportService _maxInboxImportService;
     private readonly AdminAccessService _adminAccess = new();
     private readonly DispatcherTimer _timer = new();
     private readonly ObservableCollection<HelpRequest> _requests = [];
@@ -41,7 +42,6 @@ public partial class MainWindow : Window
         InitializeComponent();
         _ruDesktopService = new RuDesktopService(_logger);
         _remoteClientConfigService = new RemoteClientConfigService(_logger);
-        _maxInboxImportService = new MaxInboxImportService(_logger);
         _settings = _settingsService.Load();
         _state = _stateService.Load();
         RequestsGrid.ItemsSource = _requests;
@@ -55,7 +55,7 @@ public partial class MainWindow : Window
     protected override async void OnContentRendered(EventArgs e)
     {
         base.OnContentRendered(e);
-        if (string.IsNullOrWhiteSpace(_settings.Email))
+        if (string.IsNullOrWhiteSpace(_settings.ProtectedAdminApiKey))
             ShowSettings();
         else
             await CheckNowAsync();
@@ -119,25 +119,45 @@ public partial class MainWindow : Window
         if (_checking) return;
         _checking = true;
         CheckButton.IsEnabled = false;
-        SetStatus("Проверяем почту…", "#F3A847");
+        SetStatus("Синхронизация с HonestLicenseServer…", "#F3A847");
 
         try
         {
-            var poller = new MailPoller(_logger);
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            var result = await poller.CheckAsync(_settings, _state, cts.Token);
-            SetStatus(result.Status, "#48D39C");
+            HonestLicenseAdminApiClient api = CreateApiClient();
+            IReadOnlyList<AdminSupportRequest> support = await api.GetSupportRequestsAsync(null, cts.Token);
+            IReadOnlyList<AdminDeviceRequest> devices = await api.GetDeviceRequestsAsync("Pending", cts.Token);
+            IReadOnlyList<AdminDevice> registeredDevices = await api.GetDevicesAsync(null, cts.Token);
+            IReadOnlyList<AdminLicense> licenses = await api.GetLicensesAsync(null, cts.Token);
+            var licensedDeviceIds = new HashSet<string>(licenses
+                .Where(x => !string.Equals(x.Status, "Revoked", StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(x.Status, "Superseded", StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(x.DeviceId))
+                .Select(x => x.DeviceId!), StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, AdminDevice> registeredByExternalId = registeredDevices
+                .Where(x => !string.IsNullOrWhiteSpace(x.DeviceId))
+                .GroupBy(x => x.DeviceId!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+            List<HelpRequest> incoming = support.Select(x => MapSupportRequest(x, registeredByExternalId))
+                .Concat(devices.Select(MapDeviceRequest))
+                .Concat(registeredDevices
+                    .Where(x => string.Equals(x.Status, "Active", StringComparison.OrdinalIgnoreCase) &&
+                                !string.IsNullOrWhiteSpace(x.DeviceId) && !licensedDeviceIds.Contains(x.DeviceId!))
+                    .Select(MapUnlicensedDevice)).ToList();
+            Dictionary<string, HelpRequest> existing = _state.Requests
+                .ToDictionary(x => x.Uid, StringComparer.Ordinal);
+            foreach (HelpRequest request in incoming)
+                if (existing.TryGetValue(request.Uid, out HelpRequest? previous))
+                    request.IsHandled = previous.IsHandled;
+            List<HelpRequest> newRequests = incoming
+                .Where(x => !existing.ContainsKey(x.Uid)).ToList();
+            _state.Requests = incoming;
+            SetStatus($"Сервер: заявок {incoming.Count}", "#48D39C");
             SideLastCheckText.Text = $"Последняя проверка: {DateTime.Now:HH:mm:ss}";
 
-            foreach (var request in result.NewRequests)
+            foreach (HelpRequest request in newRequests)
             {
-                _logger.Info($"New or repaired request: {request.ClientName}, {request.ProblemType}");
-                ShowNotification(request);
-            }
-
-            foreach (var request in _maxInboxImportService.Import(_state))
-            {
-                _logger.Info($"New MAX request: {request.ClientName}, {request.ProblemType}");
+                _logger.Info($"New server request: {request.ClientName}, {request.ProblemType}");
                 ShowNotification(request);
             }
 
@@ -146,8 +166,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _logger.Error("Mail check failed", ex);
-            SetStatus("Ошибка проверки", "#F06B78");
+            _logger.Error("HonestLicenseServer synchronization failed", ex);
+            SetStatus("Ошибка API: " + ex.Message, "#F06B78");
         }
         finally
         {
@@ -155,6 +175,64 @@ public partial class MainWindow : Window
             CheckButton.IsEnabled = true;
         }
     }
+
+    private HonestLicenseAdminApiClient CreateApiClient() => new(
+        _settings.ApiBaseUrl,
+        () => DpapiProtector.Unprotect(_settings.ProtectedAdminApiKey));
+
+    private static HelpRequest MapSupportRequest(AdminSupportRequest value, IReadOnlyDictionary<string, AdminDevice> devices)
+    {
+        devices.TryGetValue(value.ExternalDeviceId ?? "", out AdminDevice? device);
+        return new HelpRequest
+        {
+        Uid = "api-support-" + value.Id,
+        MessageId = value.Id.ToString(),
+        Subject = value.Subject ?? "Запрос поддержки",
+        ClientId = value.ClientId ?? "",
+        ClientName = value.ClientId ?? "Клиент HonestFlow",
+        MachineName = device?.Name ?? value.ExternalDeviceId ?? "",
+        DeviceId = value.ExternalDeviceId ?? "",
+        Address = device?.Address ?? "",
+        HonestFlowVersion = value.HonestFlowVersion ?? "",
+        ProblemType = value.Subject ?? "Запрос поддержки",
+        Message = value.Message ?? "",
+        CreatedAt = value.CreatedAtUtc,
+        IsHandled = string.Equals(value.Status, "Resolved", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(value.Status, "Closed", StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    private static HelpRequest MapDeviceRequest(AdminDeviceRequest value) => new()
+    {
+        Uid = "api-device-" + value.Id,
+        MessageId = value.Id.ToString(),
+        Subject = "Регистрация устройства",
+        ClientId = value.ClientId ?? "",
+        ClientName = value.ClientName ?? value.ClientId ?? "Клиент HonestFlow",
+        MachineName = value.RequestedName ?? value.DeviceId ?? "",
+        DeviceId = value.DeviceId ?? "",
+        Address = value.Address ?? "",
+        ProblemType = "Регистрация устройства / доступ к HonestFlow",
+        Message = $"DeviceId: {value.DeviceId}\nАдрес: {value.Address}\nСтатус: {value.Status}\n{value.Comment}",
+        CreatedAt = value.RequestedAtUtc,
+        IsHandled = !string.Equals(value.Status, "Pending", StringComparison.OrdinalIgnoreCase)
+    };
+
+    private static HelpRequest MapUnlicensedDevice(AdminDevice value) => new()
+    {
+        Uid = "api-unlicensed-" + value.Id,
+        MessageId = value.Id.ToString(),
+        Subject = "Лицензия устройства",
+        ClientId = value.ClientId ?? "",
+        ClientName = value.ClientName ?? value.ClientId ?? "Клиент HonestFlow",
+        MachineName = value.Name ?? value.DeviceId ?? "",
+        DeviceId = value.DeviceId ?? "",
+        Address = value.Address ?? "",
+        ProblemType = "Устройство зарегистрировано — лицензия не выдана",
+        Message = $"DeviceId: {value.DeviceId}\nАдрес: {value.Address}\nРегистрация подтверждена. Требуется подписать и опубликовать лицензию.",
+        CreatedAt = value.RegisteredAtUtc,
+        IsHandled = false
+    };
 
     private void SetStatus(string text, string color)
     {
@@ -316,26 +394,59 @@ public partial class MainWindow : Window
     {
         if (SelectedRequest() is not { } request) return;
         SetStatus("Загружаем карточку клиента…", "#F3A847");
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
-        ClientMatchResult match = await _remoteClientConfigService.FindClientAsync(
-            request.ClientId, request.ClientName, request.InnMasked, cts.Token);
-        if (!match.Success)
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            HonestLicenseAdminApiClient api = CreateApiClient();
+            IReadOnlyList<AdminClient> clients = await api.GetClientsAsync(cts.Token);
+            AdminClient? source = clients.FirstOrDefault(x => string.Equals(x.ClientId, request.ClientId, StringComparison.OrdinalIgnoreCase))
+                ?? clients.FirstOrDefault(x => string.Equals(x.Name, request.ClientName, StringComparison.CurrentCultureIgnoreCase));
+            if (source is null) throw new InvalidDataException("Клиент не найден на HonestLicenseServer.");
+            string clientId = source.ClientId ?? "";
+            AdminClientIntegrationSettings integration = await api.GetClientIntegrationSettingsAsync(clientId, cts.Token);
+            IReadOnlyList<AdminComponentOverride> overrides = await api.GetComponentOverridesAsync(clientId, cts.Token);
+            IReadOnlyList<AdminVersion> versions = await api.GetVersionsAsync(cts.Token);
+            IReadOnlyList<AdminDevice> devices = await api.GetDevicesAsync(clientId, cts.Token);
+            string? Component(string name) => overrides.FirstOrDefault(x => NormalizeApiName(x.Component) == NormalizeApiName(name))?.RequiredVersion
+                ?? versions.FirstOrDefault(x => NormalizeApiName(x.Application) == NormalizeApiName(name))?.CurrentVersion;
+            var client = new ClientConfiguration
+            {
+                ClientId = clientId,
+                Name = source.Name ?? clientId,
+                Inn = source.Inn ?? "",
+                Architecture = source.Architecture ?? "x64",
+                HasLmDatabaseBackup = source.HasLmDatabaseBackup,
+                Password = integration.IdentificationCode ?? "",
+                Token = integration.ChzToken ?? "",
+                Versions = new ComponentVersions
+                {
+                    HonestFlow = Component("HonestFlow"), LmModule = Component("LmModule"),
+                    AtolDriver = Component("AtolDriver"), ESM = Component("ESM"), Controller = Component("Controller")
+                },
+                Devices = devices.Select(x => new ClientDeviceConfiguration
+                {
+                    DeviceId = x.DeviceId ?? "", Name = x.Name ?? "", Address = x.Address ?? "", Status = x.Status ?? ""
+                }).ToList()
+            };
+
+            if (!string.Equals(request.ClientId, client.ClientId, StringComparison.Ordinal))
+            {
+                request.ClientId = client.ClientId;
+                _stateService.Save(_state);
+            }
+            SetStatus("Карточка клиента загружена", "#48D39C");
+            var window = new ClientProfileWindow(client, "HonestLicenseServer", OpenAdminEditor) { Owner = this };
+            window.ShowDialog();
+        }
+        catch (Exception ex)
         {
             SetStatus("Клиент не найден", "#F06B78");
-            ShowWarning(match.Error);
-            return;
+            _logger.Error("Server client profile load failed", ex);
+            ShowWarning(ex.Message);
         }
-
-        if (!string.Equals(request.ClientId, match.Client!.ClientId, StringComparison.Ordinal))
-        {
-            request.ClientId = match.Client.ClientId;
-            _stateService.Save(_state);
-        }
-
-        SetStatus("Карточка клиента загружена", "#48D39C");
-        var window = new ClientProfileWindow(match.Client, match.MatchSource, OpenAdminEditor) { Owner = this };
-        window.ShowDialog();
     }
+
+    private static string NormalizeApiName(string? value) => (value ?? "").Replace("-", "").Replace("_", "").ToUpperInvariant();
 
     private void OpenConfigEditorButton_Click(object sender, RoutedEventArgs e) => OpenAdminEditor();
 
@@ -414,12 +525,11 @@ public partial class MainWindow : Window
         ShowSection("Settings", _settingsContent);
     }
 
-    private void OpenJournalButton_Click(object sender, RoutedEventArgs e)
+    private async void OpenJournalButton_Click(object sender, RoutedEventArgs e)
     {
-        string ReadLog(string path) => File.Exists(path) ? File.ReadAllText(path) : "Журнал пока пуст.";
         var text = new System.Windows.Controls.TextBox
         {
-            Text = ReadLog(AppPaths.LogPath) + Environment.NewLine + ReadLog(AppPaths.AdminAuditPath),
+            Text = "Загрузка последних записей…",
             IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto
@@ -431,6 +541,35 @@ public partial class MainWindow : Window
         Grid.SetRow(text, 1);
         grid.Children.Add(text);
         ShowSection("Journal", grid);
+        try
+        {
+            string content = await Task.Run(() =>
+                "=== HonestDesk ===" + Environment.NewLine + ReadLogTail(AppPaths.LogPath) +
+                Environment.NewLine + Environment.NewLine + "=== Административные операции ===" + Environment.NewLine +
+                ReadLogTail(AppPaths.AdminAuditPath));
+            if (_state.SelectedSection == "Journal")
+            {
+                text.Text = content;
+                text.ScrollToEnd();
+            }
+        }
+        catch (Exception ex)
+        {
+            text.Text = "Не удалось прочитать журнал: " + ex.Message;
+            _logger.Error("Journal read failed", ex);
+        }
+    }
+
+    private static string ReadLogTail(string path, int maxBytes = 512 * 1024)
+    {
+        if (!File.Exists(path)) return "Журнал пока пуст.";
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        long start = Math.Max(0, stream.Length - maxBytes);
+        stream.Seek(start, SeekOrigin.Begin);
+        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        if (start > 0) reader.ReadLine();
+        string value = reader.ReadToEnd();
+        return start > 0 ? "… показан только конец большого журнала …" + Environment.NewLine + value : value;
     }
 
     private void ShowSection(string section, FrameworkElement? content)
@@ -454,15 +593,102 @@ public partial class MainWindow : Window
             default: ShowSection("Support", null); break;
         }
     }
-    private void MarkHandledButton_Click(object sender, RoutedEventArgs e)
+    private async void MarkHandledButton_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedRequest() is not { } request) return;
+        if (TryGetDeviceRequestId(request, out int requestId))
+        {
+            MessageBoxResult answer = System.Windows.MessageBox.Show(this,
+                $"Одобрить регистрацию устройства «{request.MachineName}» для клиента {request.ClientName}?",
+                "HonestLicenseServer", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes) return;
+            try
+            {
+                HonestLicenseAdminApiClient api = CreateApiClient();
+                await api.ApproveDeviceRequestAsync(requestId, request.MachineName, request.Address, null, CancellationToken.None);
+                _logger.Info($"Device request approved through API: {requestId}");
+                await IssueDeviceLicenseAsync(api, request);
+                await CheckNowAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"Device request approval failed: {requestId}", ex);
+                System.Windows.MessageBox.Show(this, ex.Message, "Ошибка HonestLicenseServer", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            return;
+        }
+        if (request.Uid.StartsWith("api-unlicensed-", StringComparison.Ordinal))
+        {
+            try
+            {
+                await IssueDeviceLicenseAsync(CreateApiClient(), request);
+                await CheckNowAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"Device license issue failed: {request.DeviceId}", ex);
+                System.Windows.MessageBox.Show(this, ex.Message, "Ошибка выдачи лицензии", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            return;
+        }
         var stored = _state.Requests.FirstOrDefault(x => x.Uid == request.Uid);
         if (stored is null) return;
         stored.IsHandled = true;
         _stateService.Save(_state);
         _logger.Info($"Request marked handled: {stored.Uid}");
         ReloadRequests();
+    }
+
+    private async Task IssueDeviceLicenseAsync(HonestLicenseAdminApiClient api, HelpRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ClientId) || string.IsNullOrWhiteSpace(request.DeviceId))
+            throw new InvalidDataException("В заявке отсутствуют ClientId или DeviceId.");
+        var service = new ServerDeviceLicenseService(api);
+        long revision;
+        try
+        {
+            revision = await service.IssueAsync(request.ClientId, request.DeviceId, null, CancellationToken.None);
+        }
+        catch (LicensePolicyRequiredException)
+        {
+            var dialog = new DeviceLicensePolicyWindow { Owner = this };
+            if (dialog.ShowDialog() != true || dialog.Policy is null)
+                throw new OperationCanceledException("Выдача лицензии отменена оператором.");
+            revision = await service.IssueAsync(request.ClientId, request.DeviceId, dialog.Policy, CancellationToken.None);
+        }
+        _adminAccess.Audit($"Device approved and licensed; client={request.ClientId}; device={request.DeviceId}; revision={revision}");
+        System.Windows.MessageBox.Show(this,
+            $"Устройство зарегистрировано, лицензия revision {revision} подписана и опубликована.",
+            "HonestDesk", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private async void RejectDeviceRequestButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedRequest() is not { } request || !TryGetDeviceRequestId(request, out int requestId))
+        {
+            System.Windows.MessageBox.Show(this, "Выберите заявку регистрации устройства.", "HonestDesk", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (System.Windows.MessageBox.Show(this,
+                $"Отклонить регистрацию устройства «{request.MachineName}»?",
+                "HonestLicenseServer", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        try
+        {
+            await CreateApiClient().RejectDeviceRequestAsync(requestId, "Отклонено оператором HonestDesk", CancellationToken.None);
+            _logger.Info($"Device request rejected through API: {requestId}");
+            await CheckNowAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Device request rejection failed: {requestId}", ex);
+            System.Windows.MessageBox.Show(this, ex.Message, "Ошибка HonestLicenseServer", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static bool TryGetDeviceRequestId(HelpRequest request, out int id)
+    {
+        id = 0;
+        return request.Uid.StartsWith("api-device-", StringComparison.Ordinal) && int.TryParse(request.MessageId, out id);
     }
 
     private void MailButton_Click(object sender, RoutedEventArgs e)

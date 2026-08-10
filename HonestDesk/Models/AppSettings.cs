@@ -2,6 +2,8 @@
 
 public sealed class AppSettings
 {
+    public string ApiBaseUrl { get; set; } = "https://api.honestflow.ru/";
+    public string ProtectedAdminApiKey { get; set; } = "";
     public string ImapServer { get; set; } = "imap.yandex.ru";
     public int ImapPort { get; set; } = 993;
     public bool UseSsl { get; set; } = true;

@@ -10,6 +10,7 @@ public sealed class HelpRequest
     public string InnMasked { get; set; } = "";
     public string Address { get; set; } = "";
     public string MachineName { get; set; } = "";
+    public string DeviceId { get; set; } = "";
     public string WindowsUser { get; set; } = "";
     public string RuDesktopId { get; set; } = "";
     public string HonestFlowVersion { get; set; } = "";

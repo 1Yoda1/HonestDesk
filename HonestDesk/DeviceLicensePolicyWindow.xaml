@@ -1,0 +1,25 @@
+<Window x:Class="HonestDesk.DeviceLicensePolicyWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Параметры первой лицензии" Width="500" Height="470"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Grid Background="#F4F6FB" Margin="24">
+        <StackPanel>
+            <TextBlock Text="Первая лицензия клиента" FontSize="24" FontWeight="SemiBold"/>
+            <TextBlock Text="У клиента нет готовой политики. Выберите доступ для нового устройства."
+                       TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,22"/>
+            <CheckBox x:Name="ViewCheck" Content="Просмотр состояния и ремонт точки" IsChecked="True" Margin="0,0,0,12"/>
+            <CheckBox x:Name="InstallCheck" Content="Установка и обслуживание точки" IsChecked="True" Margin="0,0,0,20"/>
+            <TextBlock Text="Минимальная версия HonestFlow"/>
+            <TextBox x:Name="VersionBox" Text="0.0.0" Margin="0,6,0,14" Padding="8"/>
+            <TextBlock Text="Offline grace, часов"/>
+            <TextBox x:Name="GraceBox" Text="72" Margin="0,6,0,14" Padding="8"/>
+            <TextBlock Text="Срок лицензии, дней"/>
+            <TextBox x:Name="DaysBox" Text="365" Margin="0,6,0,20" Padding="8"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Отмена" Width="100" Height="40" Margin="0,0,10,0" Click="Cancel_Click"/>
+                <Button Content="Выдать лицензию" Width="150" Height="40" Click="Accept_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

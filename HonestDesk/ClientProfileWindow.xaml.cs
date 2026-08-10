@@ -26,6 +26,10 @@ public partial class ClientProfileWindow : Window
         AtolVersionText.Text = Version(client.Versions.AtolDriver);
         EsmVersionText.Text = Version(client.Versions.ESM);
         ControllerVersionText.Text = Version(client.Versions.Controller);
+        DevicesText.Text = client.Devices.Count == 0
+            ? "Зарегистрированных устройств нет"
+            : string.Join("\n", client.Devices.Select(x =>
+                $"{Value(x.Name)}  ·  {Value(x.Address)}  ·  {Value(x.Status)}\nDeviceId: {Value(x.DeviceId)}"));
         TagsText.Text = client.Tags.Count == 0 ? "Дополнительные теги не заданы" : string.Join("   ·   ", client.Tags);
     }
 

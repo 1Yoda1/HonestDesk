@@ -103,9 +103,6 @@
                                                Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <Button x:Name="ImportRegistrationRequestsButton" Style="{StaticResource SoftButton}"
-                                            Content="Импорт заявок" Click="ImportRegistrationRequestsButton_Click"
-                                            Margin="0,0,8,0"/>
                                     <Button Style="{StaticResource SoftButton}" Content="Операторские устройства"
                                             Click="OperatorDevicesButton_Click"/>
                                 </StackPanel>

@@ -77,7 +77,7 @@
                                 <StackPanel Grid.Row="2"><TextBlock Text="ИНН" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="InnBox"/></StackPanel>
                                 <StackPanel Grid.Row="2" Grid.Column="2"><TextBlock Text="Архитектура" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><ComboBox x:Name="ArchitectureBox"><ComboBoxItem Content="x64"/><ComboBoxItem Content="x86"/></ComboBox></StackPanel>
                                 <StackPanel Grid.Row="4"><TextBlock Text="Пароль продавца" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="ClientPasswordBox"/></StackPanel>
-                                <StackPanel Grid.Row="4" Grid.Column="2"><TextBlock Text="Токен" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="TokenBox"/></StackPanel>
+                                <StackPanel Grid.Row="4" Grid.Column="2"><TextBlock Text="Токен ЧЗ" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="TokenBox"/></StackPanel>
                                 <StackPanel Grid.Row="6"><TextBlock Text="Пароль RuDesktop" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="RuPasswordBox"/></StackPanel>
                                 <StackPanel Grid.Row="6" Grid.Column="2">
                                     <TextBlock Text="Возможности клиента" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,7"/>
@@ -93,7 +93,7 @@
                                     CornerRadius="12" Padding="14" Margin="0,18,0,0">
                                 <StackPanel>
                                     <TextBlock Text="Персональные версии клиента" FontSize="13" FontWeight="SemiBold"/>
-                                    <TextBlock Text="«Глобальная» означает версию из общих настроек ниже."
+                                    <TextBlock Text="В списке показаны версии файлов из серверного каталога assets. Глобальная версия указана явно."
                                                Foreground="{StaticResource Muted}" FontSize="10" Margin="0,2,0,12"/>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -113,7 +113,7 @@
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
                             <TextBlock Text="Версии компонентов" FontSize="18" FontWeight="SemiBold"/>
-                            <TextBlock Text="Глобальные версии применяются, если у клиента нет переопределения."
+                            <TextBlock Text="Глобальные версии применяются, если у клиента нет override. Список формируется из /api/admin/assets."
                                        Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,16"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -133,6 +133,34 @@
                                                Foreground="{StaticResource Muted}" FontSize="10" TextWrapping="Wrap"/>
                                 </StackPanel>
                             </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,18,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Каталог доступных файлов" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock Text="Метаданные загружаются с HonestLicenseServer. «Папка» открывает публичную папку; точный путь указан в таблице."
+                                       Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,14"/>
+                            <DataGrid x:Name="AssetsGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                      CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                      MaxHeight="280" RowHeight="42">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="КОМПОНЕНТ" Binding="{Binding Component}" Width="110"/>
+                                    <DataGridTextColumn Header="ВЕРСИЯ" Binding="{Binding Version}" Width="100"/>
+                                    <DataGridTextColumn Header="АРХ." Binding="{Binding Architecture}" Width="65"/>
+                                    <DataGridTextColumn Header="ФАЙЛ" Binding="{Binding FileName}" Width="*"/>
+                                    <DataGridTextColumn Header="РАЗМЕР" Binding="{Binding DisplaySize}" Width="85"/>
+                                    <DataGridTextColumn Header="ПУТЬ" Binding="{Binding YandexPath}" Width="170"/>
+                                    <DataGridTemplateColumn Header="ССЫЛКА" Width="90">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="{Binding LinkCaption}" Padding="8,4" Click="OpenAssetLink_Click"
+                                                        IsEnabled="{Binding HasLink}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
                         </StackPanel>
                     </Border>
                 </StackPanel>
