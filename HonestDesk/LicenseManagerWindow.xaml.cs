@@ -691,8 +691,8 @@ public partial class LicenseManagerWindow : Window
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
             IReadOnlyList<AdminDevice> serverDevices = await api.GetDevicesAsync(
                 license.ClientId, cts.Token, includeDeleted: true);
-            AdminDevice? serverDevice = serverDevices.SingleOrDefault(x =>
-                string.Equals(x.DeviceId, value.DeviceId, StringComparison.OrdinalIgnoreCase));
+            AdminDevice? serverDevice = AdminLifecycleVisibility.FindCurrentBoundDevice(
+                serverDevices, license.ClientId, value.DeviceId);
 
             if (serverDevice is not null &&
                 !string.Equals(serverDevice.Status, "Deleted", StringComparison.OrdinalIgnoreCase))

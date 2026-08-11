@@ -19,6 +19,8 @@ public sealed class HonestLicenseAdminApiClient
 
     public Task<IReadOnlyList<AdminSupportRequest>> GetSupportRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminSupportRequest>("api/admin/support-requests" + Query("status", status), token);
     public Task<IReadOnlyList<AdminDeviceRequest>> GetDeviceRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminDeviceRequest>("api/admin/device-requests" + Query("status", status), token);
+    public Task<IReadOnlyList<AdminDeviceRequest>> GetAllDeviceRequestsAsync(CancellationToken token) =>
+        GetListAsync<AdminDeviceRequest>("api/admin/device-requests?status=", token);
     public async Task<IReadOnlyList<AdminClient>> GetClientsAsync(
         CancellationToken token,
         bool includeInactive = false)
@@ -61,6 +63,10 @@ public sealed class HonestLicenseAdminApiClient
     public Task UpdateClientAsync(string clientId, object request, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}", request, token);
     public Task CreateClientAsync(object request, CancellationToken token) => SendAsync(HttpMethod.Post, "api/admin/clients", request, token);
     public Task UpdateDeviceAsync(int id, object request, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/devices/{id}", request, token);
+    public Task RestoreDeviceAsync(int id, CancellationToken token) =>
+        SendAsync(HttpMethod.Put, $"api/admin/devices/{id}/restore", null, token);
+    public Task ReleaseDeviceIdAsync(int id, CancellationToken token) =>
+        SendAsync(HttpMethod.Put, $"api/admin/devices/{id}/release", null, token);
     public Task PutVersionAsync(string application, string version, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/versions/{Uri.EscapeDataString(application)}", new { currentVersion = version }, token);
     public Task PutComponentOverrideAsync(string clientId, string component, string? version, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}/component-versions/{Uri.EscapeDataString(component)}", new { requiredVersion = version }, token);
     public Task PutClientIntegrationSettingsAsync(
@@ -127,7 +133,7 @@ public sealed class AdminDeviceRequest
     public string? Comment { get; set; }
 }
 public sealed class AdminClient { public string? ClientId { get; set; } public string? Name { get; set; } public string? Inn { get; set; } public string? Architecture { get; set; } public bool IsActive { get; set; } public bool HasLmDatabaseBackup { get; set; } public int DeviceCount { get; set; } public int ActiveDeviceCount { get; set; } public int LicenseCount { get; set; } public bool CredentialConfigured { get; set; } }
-public sealed class AdminDevice { public int Id { get; set; } public string? ClientId { get; set; } public string? ClientName { get; set; } public string? DeviceId { get; set; } public string? Name { get; set; } public string? Address { get; set; } public string? Comment { get; set; } public string? Status { get; set; } public DateTimeOffset RegisteredAtUtc { get; set; } }
+public sealed class AdminDevice { public int Id { get; set; } public string? ClientId { get; set; } public string? ClientName { get; set; } public string? DeviceId { get; set; } public string? Name { get; set; } public string? Address { get; set; } public string? Comment { get; set; } public string? Status { get; set; } public bool DeviceIdReleased { get; set; } public DateTimeOffset RegisteredAtUtc { get; set; } }
 public sealed class AdminLicense { public int Id { get; set; } public string? ClientId { get; set; } public string? ClientName { get; set; } public string? DeviceId { get; set; } public long Revision { get; set; } public string? KeyId { get; set; } public string? Status { get; set; } public DateTimeOffset IssuedAtUtc { get; set; } public DateTimeOffset ValidUntilUtc { get; set; } }
 public sealed class AdminLicenseDetail { public int Id { get; set; } public string? ClientId { get; set; } public string? DeviceId { get; set; } public long Revision { get; set; } public string? GrantJson { get; set; } public string? SignatureBase64 { get; set; } public string? KeyId { get; set; } public string? Status { get; set; } public DateTimeOffset IssuedAtUtc { get; set; } public DateTimeOffset ValidUntilUtc { get; set; } }
 public sealed class AdminVersion { public string? Application { get; set; } public string? CurrentVersion { get; set; } public DateTimeOffset ImportedAtUtc { get; set; } }

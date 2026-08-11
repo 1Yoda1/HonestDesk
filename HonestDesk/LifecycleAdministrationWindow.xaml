@@ -1,0 +1,83 @@
+<Window x:Class="HonestDesk.LifecycleAdministrationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="HonestDesk · Клиенты и устройства" Width="1280" Height="820"
+        MinWidth="1050" MinHeight="650" WindowStartupLocation="CenterOwner">
+    <Grid Background="#F4F6FB" Margin="20">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid>
+            <TextBlock Text="Управление состоянием клиентов и устройств" FontSize="22" FontWeight="SemiBold"/>
+            <Button HorizontalAlignment="Right" Style="{StaticResource SoftButton}" Content="Обновить" Click="ReloadButton_Click"/>
+        </Grid>
+        <TabControl Grid.Row="1" Margin="0,16,0,12">
+            <TabItem Header="Клиенты">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <CheckBox x:Name="ShowInactiveClientsCheck" Content="Показывать отключённых клиентов"
+                              Checked="VisibilityFilter_Changed" Unchecked="VisibilityFilter_Changed"/>
+                    <DataGrid x:Name="ClientsGrid" Grid.Row="1" Margin="0,10" AutoGenerateColumns="False"
+                              IsReadOnly="True" CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="КЛИЕНТ" Binding="{Binding Name}" Width="*"/>
+                            <DataGridTextColumn Header="CLIENT ID" Binding="{Binding ClientId}" Width="180"/>
+                            <DataGridTextColumn Header="ИНН" Binding="{Binding Inn}" Width="140"/>
+                            <DataGridCheckBoxColumn Header="АКТИВЕН" Binding="{Binding IsActive}" Width="85"/>
+                            <DataGridTextColumn Header="УСТРОЙСТВ" Binding="{Binding DeviceCount}" Width="95"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <Button Grid.Row="2" HorizontalAlignment="Left" Style="{StaticResource SoftButton}"
+                            Content="Включить клиента" Click="EnableClientButton_Click"/>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Устройства">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="2*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <CheckBox x:Name="ShowDeletedDevicesCheck" Content="Показывать удалённые"
+                              Checked="VisibilityFilter_Changed" Unchecked="VisibilityFilter_Changed"/>
+                    <DataGrid x:Name="DevicesGrid" Grid.Row="1" Margin="0,10" AutoGenerateColumns="False"
+                              IsReadOnly="True" CanUserAddRows="False" SelectionChanged="DevicesGrid_SelectionChanged">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="КЛИЕНТ" Binding="{Binding ClientName}" Width="*"/>
+                            <DataGridTextColumn Header="CLIENT ID" Binding="{Binding ClientId}" Width="150"/>
+                            <DataGridTextColumn Header="НАЗВАНИЕ" Binding="{Binding Name}" Width="*"/>
+                            <DataGridTextColumn Header="DEVICE ID" Binding="{Binding DeviceId}" Width="1.3*"/>
+                            <DataGridTextColumn Header="АДРЕС" Binding="{Binding Address}" Width="1.2*"/>
+                            <DataGridTextColumn Header="КОММЕНТАРИЙ" Binding="{Binding Comment}" Width="*"/>
+                            <DataGridTextColumn Header="СТАТУС" Binding="{Binding Status}" Width="90"/>
+                            <DataGridCheckBoxColumn Header="ID ОСВОБОЖДЁН" Binding="{Binding DeviceIdReleased}" Width="115"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal">
+                        <Button Style="{StaticResource SoftButton}" Content="Восстановить устройство" Click="RestoreDeviceButton_Click" Margin="0,0,8,0"/>
+                        <Button Style="{StaticResource SoftButton}" Content="Освободить DeviceId" Click="ReleaseDeviceButton_Click" Margin="0,0,8,0"/>
+                        <Button Style="{StaticResource SoftButton}" Content="Освободить для переноса" Click="ReleaseForTransferButton_Click"/>
+                    </StackPanel>
+                    <Grid Grid.Row="3" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                        <GroupBox Header="История лицензий">
+                            <DataGrid x:Name="LicenseHistoryGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="REV" Binding="{Binding Revision}" Width="65"/>
+                                    <DataGridTextColumn Header="СТАТУС" Binding="{Binding Status}" Width="100"/>
+                                    <DataGridTextColumn Header="ВЫДАНА" Binding="{Binding IssuedAtUtc}" Width="*"/>
+                                    <DataGridTextColumn Header="ДО" Binding="{Binding ValidUntilUtc}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </GroupBox>
+                        <GroupBox Grid.Column="2" Header="История регистрации">
+                            <DataGrid x:Name="RegistrationHistoryGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="СТАТУС" Binding="{Binding Status}" Width="90"/>
+                                    <DataGridTextColumn Header="ИМЯ" Binding="{Binding RequestedName}" Width="*"/>
+                                    <DataGridTextColumn Header="АДРЕС" Binding="{Binding RequestedAddress}" Width="*"/>
+                                    <DataGridTextColumn Header="КОММЕНТАРИЙ" Binding="{Binding Comment}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </GroupBox>
+                    </Grid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        <TextBlock x:Name="StatusText" Grid.Row="2" Foreground="#596681" Text="Загрузка…"/>
+    </Grid>
+</Window>

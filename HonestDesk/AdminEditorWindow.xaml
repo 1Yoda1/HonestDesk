@@ -17,6 +17,8 @@
                     <TextBlock x:Name="StatusText" Text="Загрузка конфигурации…" Foreground="#8F9BBC" Margin="0,4,0,0"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Style="{StaticResource GhostButton}" Content="Клиенты и устройства"
+                            Click="LifecycleButton_Click" Margin="0,0,10,0"/>
                     <Button Style="{StaticResource GhostButton}" Content="Реквизиты публикации"
                             Click="CredentialsButton_Click" Margin="0,0,10,0"/>
                     <Button Style="{StaticResource GhostButton}" Content="Обновить"

@@ -620,6 +620,9 @@ public partial class AdminEditorWindow : Window
     private void CredentialsButton_Click(object sender, RoutedEventArgs e) =>
         new DiskCredentialsWindow { Owner = this }.ShowDialog();
 
+    private void LifecycleButton_Click(object sender, RoutedEventArgs e) =>
+        new LifecycleAdministrationWindow(_access) { Owner = this }.ShowDialog();
+
     private void LicensesButton_Click(object sender, RoutedEventArgs e)
     {
         ApplyCurrent(showErrors: false);
