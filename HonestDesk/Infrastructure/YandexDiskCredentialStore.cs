@@ -8,8 +8,8 @@ namespace HonestDesk.Infrastructure
 {
     public sealed class YandexDiskCredentials
     {
-        public string Login { get; set; }
-        public string AppPassword { get; set; }
+        public string Login { get; set; } = string.Empty;
+        public string AppPassword { get; set; } = string.Empty;
     }
 
     public interface IYandexDiskCredentialProtector
@@ -56,7 +56,7 @@ namespace HonestDesk.Infrastructure
 
         public YandexDiskCredentialStore(
             string path,
-            IYandexDiskCredentialProtector protector = null)
+            IYandexDiskCredentialProtector? protector = null)
         {
             Path = string.IsNullOrWhiteSpace(path)
                 ? throw new ArgumentException("Credential path is required.", nameof(path))
@@ -100,7 +100,9 @@ namespace HonestDesk.Infrastructure
             if (credentials == null)
                 throw new ArgumentNullException(nameof(credentials));
 
-            string directory = System.IO.Path.GetDirectoryName(Path);
+            string? directory = System.IO.Path.GetDirectoryName(Path);
+            if (string.IsNullOrWhiteSpace(directory))
+                throw new InvalidOperationException("Credential path must include a directory.");
             Directory.CreateDirectory(directory);
 
             byte[] jsonBytes = Encoding.UTF8.GetBytes(

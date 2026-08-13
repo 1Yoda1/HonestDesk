@@ -5,11 +5,11 @@ namespace HonestDesk.Models.Licensing
     public sealed class DeviceRegistrationRequest
     {
         public int SchemaVersion { get; set; }
-        public string ClientId { get; set; }
-        public string DeviceId { get; set; }
-        public string DeviceName { get; set; }
-        public string Address { get; set; }
-        public string HonestFlowVersion { get; set; }
+        public string ClientId { get; set; } = string.Empty;
+        public string DeviceId { get; set; } = string.Empty;
+        public string DeviceName { get; set; } = string.Empty;
+        public string Address { get; set; } = string.Empty;
+        public string HonestFlowVersion { get; set; } = string.Empty;
         public DateTimeOffset RequestedAtUtc { get; set; }
     }
 }

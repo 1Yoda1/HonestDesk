@@ -15,7 +15,7 @@ namespace HonestDesk.Infrastructure.Licensing
             "HonestDesk", "license-publications.jsonl");
 
         public static void Write(long revision, string stage, string status,
-            string versionPath = null, string manifestHash = null, string signatureHash = null)
+            string? versionPath = null, string? manifestHash = null, string? signatureHash = null)
         {
             var record = new { TimestampUtc = DateTimeOffset.UtcNow, Revision = revision,
                 Stage = stage, Status = status, VersionPath = versionPath,
@@ -31,7 +31,9 @@ namespace HonestDesk.Infrastructure.Licensing
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                string? directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
                 File.AppendAllText(path, line);
                 return true;
             }

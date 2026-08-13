@@ -57,6 +57,13 @@ public sealed class HonestLicenseAdminApiClient
             $"api/admin/clients/{Uri.EscapeDataString(clientId)}/integration-settings", null, token);
         return JsonConvert.DeserializeObject<AdminClientIntegrationSettings>(await response.Content.ReadAsStringAsync(token)) ?? new();
     }
+    public async Task<AdminClientLicensePolicy> GetClientLicensePolicyAsync(string clientId, CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(HttpMethod.Get,
+            $"api/admin/clients/{Uri.EscapeDataString(clientId)}/license-policy", null, token);
+        return JsonConvert.DeserializeObject<AdminClientLicensePolicy>(await response.Content.ReadAsStringAsync(token))
+            ?? throw new InvalidDataException("HonestLicenseServer returned an empty client license policy.");
+    }
     public Task ApproveDeviceRequestAsync(int id, string? name, string? address, string? comment, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/device-requests/{id}/approve", new { name, address, comment }, token);
     public Task RejectDeviceRequestAsync(int id, string? comment, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/device-requests/{id}/reject", new { comment }, token);
     public Task ResolveSupportRequestAsync(int id, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/support-requests/{id}/resolve", null, token);
@@ -78,6 +85,15 @@ public sealed class HonestLicenseAdminApiClient
         CancellationToken token) =>
         SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}/integration-settings",
             new { identificationCode, chzToken, ruDesktopEnabled, ruDesktopAutoOfferPasswordSetup }, token);
+    public async Task<AdminClientLicensePolicy> PutClientLicensePolicyAsync(
+        string clientId, bool isEnabled, CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(HttpMethod.Put,
+            $"api/admin/clients/{Uri.EscapeDataString(clientId)}/license-policy",
+            new { isEnabled }, token);
+        return JsonConvert.DeserializeObject<AdminClientLicensePolicy>(await response.Content.ReadAsStringAsync(token))
+            ?? throw new InvalidDataException("HonestLicenseServer returned an empty client license policy.");
+    }
     public Task RevokeLicenseAsync(int id, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/licenses/{id}/revoke", null, token);
     public Task PublishLicenseAsync(string grantBase64, string signatureBase64, string keyId, CancellationToken token) => SendAsync(HttpMethod.Post, "api/admin/licenses", new { grantBase64, signatureBase64, keyId }, token);
 
@@ -157,3 +173,4 @@ public sealed class AdminAsset
 }
 public sealed class AdminComponentOverride { public string? Component { get; set; } public string? RequiredVersion { get; set; } }
 public sealed class AdminClientIntegrationSettings { public string? ClientId { get; set; } public string? IdentificationCode { get; set; } public string? ChzToken { get; set; } public bool RuDesktopEnabled { get; set; } public bool RuDesktopAutoOfferPasswordSetup { get; set; } public bool IsConfigured { get; set; } }
+public sealed class AdminClientLicensePolicy { public string? ClientId { get; set; } public bool? IsEnabled { get; set; } }

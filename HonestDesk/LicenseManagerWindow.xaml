@@ -32,7 +32,6 @@
                     <DataGrid x:Name="LicensesGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True"
                               BorderThickness="0" HeadersVisibility="Column" SelectionChanged="LicensesGrid_SelectionChanged">
                         <DataGrid.Columns>
-                            <DataGridCheckBoxColumn Header="ВКЛ" Binding="{Binding Enabled}" Width="48"/>
                             <DataGridTextColumn Header="ИП" Binding="{Binding DisplayName}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
@@ -40,7 +39,7 @@
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
                             <Button Style="{StaticResource SoftButton}" Content="+ Добавить" Click="AddLicenseButton_Click"/>
-                            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Удалить" Click="DeleteLicenseButton_Click"/>
+                            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Отозвать лицензию" Click="DeleteLicenseButton_Click"/>
                         </Grid>
                         <Button Style="{StaticResource SoftButton}" Content="Добавить отсутствующих клиентов"
                                 Click="AddMissingButton_Click" Margin="0,8,0,0"/>
@@ -54,8 +53,8 @@
                         <StackPanel>
                             <Grid>
                                 <StackPanel>
-                                    <TextBlock Text="Лицензия клиента" FontSize="17" FontWeight="SemiBold"/>
-                                    <TextBlock Text="Функции и устройства выбранного клиента"
+                                    <TextBlock Text="Подписанные лицензии устройств" FontSize="17" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Параметры signed grants выбранного клиента"
                                                Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
                                 </StackPanel>
                             </Grid>
@@ -66,11 +65,28 @@
                                 <StackPanel Grid.Column="4"><TextBlock Text="ОФЛАЙН-ПЕРИОД, ЧАСОВ" FontSize="9" Foreground="{StaticResource Muted}"/><TextBox x:Name="GraceHoursBox" Margin="0,5,0,0"/></StackPanel>
                             </Grid>
                             <WrapPanel Margin="0,16,0,0">
-                                <CheckBox x:Name="LicenseEnabledCheck" Content="Лицензия включена" Margin="0,0,22,10"/>
                                 <CheckBox x:Name="ViewAndRepairCheck" Content="Просмотр и ремонт точки" Margin="0,0,22,10"/>
                                 <CheckBox x:Name="InstallAndMaintenanceCheck" Content="Установка и обслуживание" Margin="0,0,22,10"/>
                             </WrapPanel>
                         </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Доступ HonestFlow" FontSize="17" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="HonestFlowAccessStatusText" Text="Выберите клиента"
+                                           Margin="0,7,0,0" FontSize="14" FontWeight="SemiBold"/>
+                                <TextBlock Text="Client-level policy. Не изменяет устройства, заявки и историю подписанных лицензий."
+                                           Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,18,0"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <Button x:Name="HonestFlowAccessButton" Grid.Column="1"
+                                    Style="{StaticResource SoftButton}" Content="Изменить доступ"
+                                    VerticalAlignment="Center" IsEnabled="False"
+                                    Click="HonestFlowAccessButton_Click"/>
+                        </Grid>
                     </Border>
 
                     <Border Style="{StaticResource Card}" Margin="0,0,0,16">

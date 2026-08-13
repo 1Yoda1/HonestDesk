@@ -7,7 +7,11 @@ namespace HonestDesk.Infrastructure.Licensing;
 
 public sealed class LicenseGrantPublicationBuilder
 {
-    public IReadOnlyList<LicenseGrantPublication> Build(LicenseManifest manifest, string keyId, string privateKeyPath)
+    public IReadOnlyList<LicenseGrantPublication> Build(
+        LicenseManifest manifest,
+        string keyId,
+        string privateKeyPath,
+        IReadOnlyDictionary<string, bool?> clientPolicies)
     {
         LicenseDocumentService.Validate(manifest);
         if (string.IsNullOrWhiteSpace(keyId)) throw new InvalidOperationException("KeyId не задан.");
@@ -23,6 +27,8 @@ public sealed class LicenseGrantPublicationBuilder
         var result = new List<LicenseGrantPublication>();
         foreach (ClientLicense client in manifest.Clients ?? [])
         {
+            bool clientEnabled = ClientLicensePolicyGrantSemantics.ToClientEnabled(
+                clientPolicies, client.ClientId);
             foreach (LicensedDevice device in client.Devices ?? [])
             {
                 if (device is null || string.IsNullOrWhiteSpace(device.DeviceId)) continue;
@@ -35,10 +41,10 @@ public sealed class LicenseGrantPublicationBuilder
                     SchemaVersion = manifest.SchemaVersion, Revision = manifest.Revision,
                     IssuedAtUtc = manifest.IssuedAtUtc, ValidUntilUtc = manifest.ValidUntilUtc,
                     ClientId = client.ClientId, DeviceId = device.DeviceId,
-                    ClientEnabled = client.Enabled, DeviceEnabled = device.Enabled,
+                    ClientEnabled = clientEnabled, DeviceEnabled = device.Enabled,
                     MinHonestFlowVersion = client.MinHonestFlowVersion,
                     OfflineGraceHours = client.OfflineGraceHours,
-                    Features = client.Features?.Distinct().ToList() ?? [], PointAddress = device.Address
+                    Features = client.Features?.Distinct().ToList() ?? [], PointAddress = device.Address ?? string.Empty
                 }, keyId, pem));
             }
             foreach (OperatorDevice device in manifest.OperatorDevices ?? [])
@@ -49,7 +55,7 @@ public sealed class LicenseGrantPublicationBuilder
                     SchemaVersion = manifest.SchemaVersion, Revision = manifest.Revision,
                     IssuedAtUtc = manifest.IssuedAtUtc, ValidUntilUtc = manifest.ValidUntilUtc,
                     ClientId = client.ClientId, DeviceId = device.DeviceId,
-                    ClientEnabled = true, DeviceEnabled = device.Enabled, OperatorDevice = true,
+                    ClientEnabled = clientEnabled, DeviceEnabled = device.Enabled, OperatorDevice = true,
                     MinHonestFlowVersion = "0.0.0", OfflineGraceHours = client.OfflineGraceHours, Features = []
                 }, keyId, pem));
             }

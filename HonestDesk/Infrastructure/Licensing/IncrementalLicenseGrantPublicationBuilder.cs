@@ -70,7 +70,9 @@ public sealed class IncrementalLicenseGrantPublicationBuilder
         _privateKeyPem = File.ReadAllText(privateKeyPath);
     }
 
-    public IReadOnlyList<LicenseGrantTarget> BuildTargets(LicenseManifest manifest)
+    public IReadOnlyList<LicenseGrantTarget> BuildTargets(
+        LicenseManifest manifest,
+        IReadOnlyDictionary<string, bool?> clientPolicies)
     {
         LicenseDocumentService.Validate(manifest);
         var operatorDeviceIds = new HashSet<string>(
@@ -82,6 +84,8 @@ public sealed class IncrementalLicenseGrantPublicationBuilder
 
         foreach (ClientLicense client in manifest.Clients ?? [])
         {
+            bool clientEnabled = ClientLicensePolicyGrantSemantics.ToClientEnabled(
+                clientPolicies, client.ClientId);
             foreach (LicensedDevice device in client.Devices ?? [])
             {
                 if (device is null || string.IsNullOrWhiteSpace(device.DeviceId))
@@ -94,12 +98,12 @@ public sealed class IncrementalLicenseGrantPublicationBuilder
                     SchemaVersion = manifest.SchemaVersion,
                     ClientId = client.ClientId,
                     DeviceId = device.DeviceId,
-                    ClientEnabled = client.Enabled,
+                    ClientEnabled = clientEnabled,
                     DeviceEnabled = device.Enabled,
                     MinHonestFlowVersion = client.MinHonestFlowVersion,
                     OfflineGraceHours = client.OfflineGraceHours,
                     Features = client.Features?.Distinct().OrderBy(feature => feature).ToList() ?? [],
-                    PointAddress = device.Address
+                    PointAddress = device.Address ?? string.Empty
                 }));
             }
 
@@ -113,7 +117,7 @@ public sealed class IncrementalLicenseGrantPublicationBuilder
                     SchemaVersion = manifest.SchemaVersion,
                     ClientId = client.ClientId,
                     DeviceId = device.DeviceId,
-                    ClientEnabled = true,
+                    ClientEnabled = clientEnabled,
                     DeviceEnabled = device.Enabled,
                     OperatorDevice = true,
                     MinHonestFlowVersion = "0.0.0",

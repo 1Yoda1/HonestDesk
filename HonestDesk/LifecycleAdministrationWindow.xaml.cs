@@ -86,24 +86,25 @@ public partial class LifecycleAdministrationWindow : Window
             $"Device restored; id={device.Id}");
     }
 
-    private async Task ReleaseDeviceAsync(AdminDevice device, bool forTransfer)
+    private async Task ReleaseDeviceAsync(AdminDevice device)
     {
-        if (!IsDeletedBound(device))
+        if (!AdminLifecycleVisibility.CanReleaseDeviceId(device))
         {
             StatusText.Text = device.DeviceIdReleased
-                ? "DeviceId уже освобождён."
-                : "Освободить DeviceId можно только у устройства со статусом Deleted.";
+                ? "Устройство уже освобождено."
+                : "Освободить можно только устройство со статусом Deleted.";
             return;
         }
-        string consequence = forTransfer
-            ? "DeviceId станет доступен другому клиенту через обычную регистрацию. История останется у исходного клиента."
-            : "DeviceId станет свободным. Историческая запись, лицензии и аудит сохранятся.";
-        if (System.Windows.MessageBox.Show(this, DeviceConfirmation(device, consequence),
-                forTransfer ? "Освободить для переноса" : "Освободить DeviceId",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var confirmation = new DestructiveConfirmationWindow(
+            "Освободить устройство",
+            "Устройство будет отвязано от текущего клиента.\n" +
+            "История регистрации и лицензий сохранится.\n\n" +
+            "После освобождения этот компьютер можно зарегистрировать под другим клиентом.",
+            "Освободить устройство") { Owner = this };
+        if (confirmation.ShowDialog() != true) return;
         await ExecuteAsync("Освобождение DeviceId…",
             (api, token) => api.ReleaseDeviceIdAsync(device.Id, token),
-            $"DeviceId released; id={device.Id}; transfer={forTransfer}");
+            $"DeviceId released; id={device.Id}");
     }
 
     private async Task ExecuteAsync(string progress,
@@ -178,22 +179,19 @@ public partial class LifecycleAdministrationWindow : Window
 
     private async void ReleaseDeviceButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!_busy && DevicesGrid.SelectedItem is AdminDevice device) await ReleaseDeviceAsync(device, false);
-    }
-
-    private async void ReleaseForTransferButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_busy && DevicesGrid.SelectedItem is AdminDevice device) await ReleaseDeviceAsync(device, true);
+        if (!_busy && DevicesGrid.SelectedItem is AdminDevice device) await ReleaseDeviceAsync(device);
     }
 
     private void DevicesGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (DevicesGrid.SelectedItem is not AdminDevice device)
         {
+            ReleaseDeviceButton.IsEnabled = false;
             LicenseHistoryGrid.ItemsSource = null;
             RegistrationHistoryGrid.ItemsSource = null;
             return;
         }
+        ReleaseDeviceButton.IsEnabled = AdminLifecycleVisibility.CanReleaseDeviceId(device);
         LicenseHistoryGrid.ItemsSource = _licenses.Where(x => SameDevice(x.ClientId, x.DeviceId, device));
         RegistrationHistoryGrid.ItemsSource = _requests.Where(x => SameDevice(x.ClientId, x.DeviceId, device));
     }

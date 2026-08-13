@@ -40,14 +40,14 @@ namespace HonestDesk.Infrastructure
             var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in items)
             {
-                var type = (string)item["type"];
-                var name = (string)item["name"];
+                string? type = (string?)item["type"];
+                string? name = (string?)item["name"];
                 if (string.IsNullOrWhiteSpace(name))
                     continue;
 
                 if (string.Equals(type, "file", StringComparison.OrdinalIgnoreCase))
                 {
-                    var url = (string)item["file"];
+                    string? url = (string?)item["file"];
                     if (string.IsNullOrWhiteSpace(url))
                         url = await GetPublicDownloadUrl(client, "/" + name);
 
@@ -118,6 +118,7 @@ namespace HonestDesk.Infrastructure
             string jsonPath,
             string signaturePath,
             LicenseManifest manifest,
+            IReadOnlyDictionary<string, bool?> clientPolicies,
             string keyId,
             string privateKeyPath,
             string publicKeyPath)
@@ -134,7 +135,7 @@ namespace HonestDesk.Infrastructure
             var grantBuilder =
                 new IncrementalLicenseGrantPublicationBuilder(keyId, privateKeyPath);
             IReadOnlyList<LicenseGrantTarget> grantTargets =
-                grantBuilder.BuildTargets(manifest);
+                grantBuilder.BuildTargets(manifest, clientPolicies);
             var verifier = new LicenseDocumentService();
 
             if (!verifier.Verify(json, signature, publicKeyPath, out string localError))
@@ -155,7 +156,7 @@ namespace HonestDesk.Infrastructure
 
                 byte[] remoteJson = await ReadPublicBytesAsync(publicVersionPath + "/licenses.json");
                 byte[] remoteSignature = await ReadPublicBytesAsync(publicVersionPath + "/licenses.json.sig");
-                string remoteError = null;
+                string? remoteError = null;
                 if (ComputeHash(remoteJson) != manifestHash ||
                     ComputeHash(remoteSignature) != signatureHash ||
                     !verifier.Verify(remoteJson, remoteSignature, publicKeyPath, out remoteError))
@@ -314,7 +315,7 @@ namespace HonestDesk.Infrastructure
             byte[] remoteGrant = await ReadPublicBytesAsync(grant.VersionPath + "/grant.json");
             byte[] remoteSignature =
                 await ReadPublicBytesAsync(grant.VersionPath + "/grant.json.sig");
-            string error = null;
+            string? error = null;
             if (ComputeHash(remoteGrant) != ComputeHash(grant.GrantBytes) ||
                 ComputeHash(remoteSignature) != ComputeHash(grant.SignatureBytes) ||
                 !verifier.Verify(
@@ -1022,7 +1023,11 @@ namespace HonestDesk.Infrastructure
         {
             var json = await client.GetStringAsync(BuildPublicDownloadUrl(path));
             var payload = JObject.Parse(json);
-            return (string)payload["href"];
+            string? href = (string?)payload["href"];
+            if (string.IsNullOrWhiteSpace(href))
+                throw new InvalidDataException("Yandex Disk did not return a public download URL.");
+
+            return href;
         }
 
         private static Uri BuildWebDavUri(string remotePath)
@@ -1049,7 +1054,7 @@ namespace HonestDesk.Infrastructure
             return "/" + path.Replace('\\', '/').Trim('/');
         }
 
-        private static string ExtractVersion(string fileName)
+        private static string? ExtractVersion(string fileName)
         {
             var fullNameMatch = Regex.Match(fileName.Trim('/'), @"^\d+\.\d+\.\d+(?:\.\d+)?$");
             if (fullNameMatch.Success)

@@ -31,6 +31,9 @@ public sealed class ServerDeviceLicenseService
             throw new InvalidOperationException("В разделе лицензий не настроен закрытый ключ подписи.");
 
         IReadOnlyList<AdminLicense> allLicenses = await _api.GetLicensesAsync(null, token);
+        AdminClientLicensePolicy clientPolicy = await _api.GetClientLicensePolicyAsync(clientId, token);
+        bool clientEnabled = ClientLicensePolicyGrantSemantics.ToClientEnabled(
+            clientPolicy.IsEnabled);
         AdminLicense[] clientLicenses = allLicenses
             .Where(x => string.Equals(x.ClientId, clientId, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(x.Status, "Active", StringComparison.OrdinalIgnoreCase))
@@ -68,7 +71,7 @@ public sealed class ServerDeviceLicenseService
                 new ClientLicense
                 {
                     ClientId = clientId,
-                    Enabled = template?.ClientEnabled ?? true,
+                    Enabled = clientEnabled,
                     MinHonestFlowVersion = template?.MinHonestFlowVersion ?? fallback!.MinimumHonestFlowVersion,
                     OfflineGraceHours = template?.OfflineGraceHours ?? fallback!.OfflineGraceHours,
                     Features = features,
@@ -76,7 +79,12 @@ public sealed class ServerDeviceLicenseService
                 }
             ]
         };
-        LicenseGrantPublication publication = _builder.Build(manifest, signing.KeyId, signing.PrivateKeyPath).Single();
+        var clientPolicies = new Dictionary<string, bool?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [clientId] = clientPolicy.IsEnabled
+        };
+        LicenseGrantPublication publication = _builder.Build(
+            manifest, signing.KeyId, signing.PrivateKeyPath, clientPolicies).Single();
         LicenseSignatureEnvelope envelope = JsonConvert.DeserializeObject<LicenseSignatureEnvelope>(Encoding.UTF8.GetString(publication.SignatureBytes))
             ?? throw new InvalidDataException("Не удалось прочитать подпись лицензии.");
         await _api.PublishLicenseAsync(Convert.ToBase64String(publication.GrantBytes), envelope.Signature, envelope.KeyId, token);

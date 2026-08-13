@@ -21,8 +21,6 @@ public partial class AdminEditorWindow : Window
     private VersionsData _versions = new();
     private AvailableVersionsData _availableVersions = new();
     private SupportMailSettings _supportMailSettings = new();
-    private string _originalIpsEncrypted = "";
-    private string _originalVersionsJson = "";
     private string _baselineJson = "";
     private bool _loaded;
     private bool _busy;
@@ -452,11 +450,11 @@ public partial class AdminEditorWindow : Window
                 await api.PutComponentOverrideAsync(client.ClientId, "ESM", client.Versions?.ESM, cts.Token);
                 await api.PutComponentOverrideAsync(client.ClientId, "Controller", client.Versions?.Controller, cts.Token);
             }
-            await api.PutVersionAsync("HonestFlow", _versions.HonestFlow, cts.Token);
-            await api.PutVersionAsync("LmModule", _versions.LmModule, cts.Token);
-            await api.PutVersionAsync("AtolDriver", _versions.AtolDriver, cts.Token);
-            await api.PutVersionAsync("ESM", _versions.ESM, cts.Token);
-            await api.PutVersionAsync("Controller", _versions.Controller, cts.Token);
+            await api.PutVersionAsync("HonestFlow", _versions.HonestFlow ?? string.Empty, cts.Token);
+            await api.PutVersionAsync("LmModule", _versions.LmModule ?? string.Empty, cts.Token);
+            await api.PutVersionAsync("AtolDriver", _versions.AtolDriver ?? string.Empty, cts.Token);
+            await api.PutVersionAsync("ESM", _versions.ESM ?? string.Empty, cts.Token);
+            await api.PutVersionAsync("Controller", _versions.Controller ?? string.Empty, cts.Token);
             _serverClientIds.Clear();
             foreach (IPData client in _clients) _serverClientIds.Add(client.ClientId);
             _baselineJson = current;

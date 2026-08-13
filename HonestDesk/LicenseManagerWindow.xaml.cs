@@ -34,6 +34,10 @@ public partial class LicenseManagerWindow : Window
     private bool _hasUnsavedRegistrationImports;
     private bool _busy;
     private bool _publishedAwaitingMessageProcessing;
+    private bool _lastPublishedLoadSucceeded;
+    private bool _licensePolicyBusy;
+    private string? _licensePolicyClientId;
+    private bool? _licensePolicyEnabled;
 
     public FrameworkElement DetachContentForEmbedding()
     {
@@ -100,7 +104,6 @@ public partial class LicenseManagerWindow : Window
             LicenseClientIdBox.Items.Add(choice);
         }
         LicenseClientIdBox.SelectedItem = choice;
-        LicenseEnabledCheck.IsChecked = license?.Enabled ?? true;
         MinVersionBox.Text = license?.MinHonestFlowVersion ?? "2.4.2.0";
         GraceHoursBox.Text = (license?.OfflineGraceHours ?? 72).ToString();
         var features = license?.Features ?? [];
@@ -142,7 +145,6 @@ public partial class LicenseManagerWindow : Window
 
         license.ClientId = clientId;
         license.DisplayName = ResolveName(clientId);
-        license.Enabled = LicenseEnabledCheck.IsChecked == true;
         license.MinHonestFlowVersion = MinVersionBox.Text.Trim();
         license.OfflineGraceHours = grace;
         license.Features = SelectedFeatures();
@@ -179,6 +181,7 @@ public partial class LicenseManagerWindow : Window
 
     private async Task LoadPublishedAsync()
     {
+        _lastPublishedLoadSucceeded = false;
         if (!ConfirmDiscardUnsavedRegistrationImports()) return;
         SetBusy(true, "Загрузка лицензий с HonestLicenseServer…");
         try
@@ -219,6 +222,7 @@ public partial class LicenseManagerWindow : Window
                 SetManifest(new LicenseManifest { Revision = licenses.Count == 0 ? 0 : licenses.Max(x => x.Revision) }, published: true);
                 StatusText.Text = "На HonestLicenseServer нет действующих лицензий.";
                 _access.Audit("Server licenses loaded; active grants=0");
+                _lastPublishedLoadSucceeded = true;
                 return;
             }
             var manifest = new LicenseManifest
@@ -260,6 +264,7 @@ public partial class LicenseManagerWindow : Window
             SetManifest(manifest, published: true);
             StatusText.Text = $"С HonestLicenseServer загружено grants: {grants.Count}; revision {manifest.Revision}.";
             _access.Audit($"Server licenses loaded; grants={grants.Count}; revision={manifest.Revision}");
+            _lastPublishedLoadSucceeded = true;
         }
         catch (Exception ex)
         {
@@ -319,6 +324,17 @@ public partial class LicenseManagerWindow : Window
             LicenseDocumentService.Validate(_manifest);
             if (_manifest.Clients.Any(x => x.Devices is null || x.Devices.Count == 0))
                 throw new InvalidDataException("У каждого публикуемого клиента должно быть хотя бы одно зарегистрированное устройство.");
+            HonestLicenseAdminApiClient api = CreateAdminApi();
+            using var publishCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            stage = "Получение client-level policy";
+            StatusText.Text = stage + "…";
+            IReadOnlyDictionary<string, bool?> clientPolicies =
+                await LoadClientLicensePoliciesAsync(api, _manifest.Clients, publishCts.Token);
+            foreach (ClientLicense client in _manifest.Clients)
+            {
+                client.Enabled = ClientLicensePolicyGrantSemantics.ToClientEnabled(
+                    clientPolicies, client.ClientId);
+            }
             stage = "Сохранение и подпись licenses.json";
             StatusText.Text = stage + "…";
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(_path))!);
@@ -328,10 +344,8 @@ public partial class LicenseManagerWindow : Window
             stage = "Публикация лицензий в HonestLicenseServer";
             StatusText.Text = stage + "…";
             _access.Audit($"License publication started; revision={_manifest.Revision}");
-            IReadOnlyList<LicenseGrantPublication> grants = _grantBuilder.Build(_manifest, _settings.KeyId, _settings.PrivateKeyPath);
-            HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
-                () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
-            using var publishCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            IReadOnlyList<LicenseGrantPublication> grants = _grantBuilder.Build(
+                _manifest, _settings.KeyId, _settings.PrivateKeyPath, clientPolicies);
             IReadOnlyList<AdminLicense> serverLicenses = await api.GetLicensesAsync(null, publishCts.Token);
             IReadOnlyList<AdminDevice> registeredDevices = await api.GetDevicesAsync(null, publishCts.Token);
             var registeredPairs = new HashSet<string>(registeredDevices.Select(x => LicenseKey(x.ClientId, x.DeviceId)), StringComparer.OrdinalIgnoreCase);
@@ -516,7 +530,82 @@ public partial class LicenseManagerWindow : Window
     {
         _busy = busy;
         PublishButton.IsEnabled = !busy;
+        HonestFlowAccessButton.IsEnabled = !busy && !_licensePolicyBusy &&
+            !string.IsNullOrWhiteSpace(_licensePolicyClientId);
         if (status is not null) StatusText.Text = status;
+    }
+
+    private HonestLicenseAdminApiClient CreateAdminApi() => new(
+        _appSettings.ApiBaseUrl,
+        () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+
+    private static async Task<IReadOnlyDictionary<string, bool?>> LoadClientLicensePoliciesAsync(
+        HonestLicenseAdminApiClient api,
+        IEnumerable<ClientLicense> clients,
+        CancellationToken token)
+    {
+        var policies = new Dictionary<string, bool?>(StringComparer.OrdinalIgnoreCase);
+        foreach (string clientId in clients
+                     .Select(x => x.ClientId)
+                     .Where(x => !string.IsNullOrWhiteSpace(x))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            AdminClientLicensePolicy policy = await api.GetClientLicensePolicyAsync(clientId, token);
+            policies[clientId] = policy.IsEnabled;
+        }
+        return policies;
+    }
+
+    private async Task LoadHonestFlowAccessAsync()
+    {
+        string? clientId = SelectedLicense?.ClientId;
+        _licensePolicyClientId = null;
+        _licensePolicyEnabled = null;
+        HonestFlowAccessButton.IsEnabled = false;
+        if (string.IsNullOrWhiteSpace(clientId))
+        {
+            HonestFlowAccessStatusText.Text = "Выберите клиента";
+            HonestFlowAccessButton.Content = "Изменить доступ";
+            return;
+        }
+
+        _licensePolicyBusy = true;
+        HonestFlowAccessStatusText.Text = "Загрузка состояния…";
+        try
+        {
+            var service = new ClientHonestFlowAccessService(CreateAdminApi());
+            AdminClientLicensePolicy policy = await service.GetAsync(clientId, CancellationToken.None);
+            if (!string.Equals(SelectedLicense?.ClientId, clientId, StringComparison.OrdinalIgnoreCase))
+                return;
+            _licensePolicyClientId = clientId;
+            _licensePolicyEnabled = policy.IsEnabled;
+            RenderHonestFlowAccess();
+        }
+        catch (Exception ex)
+        {
+            if (string.Equals(SelectedLicense?.ClientId, clientId, StringComparison.OrdinalIgnoreCase))
+                HonestFlowAccessStatusText.Text = "Не удалось получить состояние: " + ex.Message;
+        }
+        finally
+        {
+            _licensePolicyBusy = false;
+            if (string.Equals(_licensePolicyClientId, clientId, StringComparison.OrdinalIgnoreCase))
+                HonestFlowAccessButton.IsEnabled = !_busy;
+        }
+    }
+
+    private void RenderHonestFlowAccess()
+    {
+        if (string.IsNullOrWhiteSpace(_licensePolicyClientId)) return;
+        bool effectiveEnabled = _licensePolicyEnabled != false;
+        HonestFlowAccessStatusText.Text = _licensePolicyEnabled switch
+        {
+            true => "Включён",
+            false => "Отключён",
+            null => "Включён (legacy allow; явная policy отсутствует)"
+        };
+        HonestFlowAccessButton.Content = effectiveEnabled ? "Отключить доступ" : "Включить доступ";
+        HonestFlowAccessButton.IsEnabled = !_licensePolicyBusy && !_busy;
     }
 
     private static LicenseManifest Clone(LicenseManifest value) =>
@@ -542,6 +631,7 @@ public partial class LicenseManagerWindow : Window
             {
                 var names = ((client["Features"] ?? client["features"]) as JArray)?
                     .Values<string>()
+                    .OfType<string>()
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .ToHashSet(StringComparer.Ordinal) ?? [];
 
@@ -663,7 +753,56 @@ public partial class LicenseManagerWindow : Window
         return dialog.ShowDialog() == true ? dialog.FileName : null;
     }
 
-    private void LicensesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => LoadLicense(SelectedLicense);
+    private async void LicensesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        LoadLicense(SelectedLicense);
+        await LoadHonestFlowAccessAsync();
+    }
+
+    private async void HonestFlowAccessButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _licensePolicyBusy || string.IsNullOrWhiteSpace(_licensePolicyClientId)) return;
+        string clientId = _licensePolicyClientId;
+        bool enable = _licensePolicyEnabled == false;
+        string clientName = ResolveName(clientId);
+        string message = enable
+            ? $"Включить доступ HonestFlow для {clientName}?"
+            : $"Отключить доступ HonestFlow для {clientName}?\n\n" +
+              "Новые входы и регистрация устройств для этого клиента будут заблокированы.\n" +
+              "Клиент, устройства, лицензии и история останутся в системе.";
+        if (System.Windows.MessageBox.Show(this, message, "Доступ HonestFlow",
+                MessageBoxButton.YesNo, enable ? MessageBoxImage.Question : MessageBoxImage.Warning) !=
+            MessageBoxResult.Yes)
+            return;
+
+        _licensePolicyBusy = true;
+        HonestFlowAccessButton.IsEnabled = false;
+        HonestFlowAccessStatusText.Text = enable ? "Включение…" : "Отключение…";
+        try
+        {
+            var service = new ClientHonestFlowAccessService(CreateAdminApi());
+            AdminClientLicensePolicy policy = await service.SetAsync(clientId, enable, CancellationToken.None);
+            if (!string.Equals(SelectedLicense?.ClientId, clientId, StringComparison.OrdinalIgnoreCase))
+                return;
+            _licensePolicyEnabled = policy.IsEnabled;
+            StatusText.Text = enable
+                ? $"Доступ HonestFlow для «{clientName}» включён."
+                : $"Доступ HonestFlow для «{clientName}» отключён.";
+        }
+        catch (Exception ex)
+        {
+            HonestFlowAccessStatusText.Text = "Состояние не изменено: " + ex.Message;
+            ShowWarning("Не удалось изменить доступ HonestFlow: " + ex.Message);
+            return;
+        }
+        finally
+        {
+            _licensePolicyBusy = false;
+            if (string.Equals(SelectedLicense?.ClientId, clientId, StringComparison.OrdinalIgnoreCase))
+                HonestFlowAccessButton.IsEnabled = !_busy;
+        }
+        RenderHonestFlowAccess();
+    }
     private void ApplyLicenseButton_Click(object sender, RoutedEventArgs e) => ApplySelected();
     private void AddDeviceButton_Click(object sender, RoutedEventArgs e) =>
         ShowWarning("Устройство добавляется через заявку регистрации и Approve. Локальный Device без записи на HonestLicenseServer не создан.");
@@ -740,9 +879,53 @@ public partial class LicenseManagerWindow : Window
         RefreshManifest();
     }
 
-    private void DeleteLicenseButton_Click(object sender, RoutedEventArgs e)
+    private async void DeleteLicenseButton_Click(object sender, RoutedEventArgs e)
     {
-        ShowWarning("Отзыв опубликованных лицензий из этого окна пока не реализован. Локальные данные и HonestLicenseServer не изменены.");
+        if (_busy || SelectedLicense is not { } license || string.IsNullOrWhiteSpace(license.ClientId)) return;
+        if (_hasUnsavedRegistrationImports)
+        {
+            ShowWarning("Сначала сохраните или отмените импортированные заявки, затем повторите отзыв лицензии.");
+            return;
+        }
+        if (!ApplySelected()) return;
+
+        string clientName = string.IsNullOrWhiteSpace(license.DisplayName)
+            ? ResolveName(license.ClientId)
+            : license.DisplayName;
+        SetBusy(true, "Получение действующих лицензий с HonestLicenseServer…");
+        try
+        {
+            HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
+                () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+            var service = new LicenseRevocationService(api);
+            using var loadCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            IReadOnlyList<AdminLicense> active = await service
+                .GetActiveClientLicensesAsync(license.ClientId, loadCts.Token);
+            SetBusy(false);
+            if (active.Count == 0)
+            {
+                StatusText.Text = "На сервере нет действующей лицензии для выбранного клиента.";
+                return;
+            }
+
+            var confirmation = new LicenseRevocationWindow(clientName, active) { Owner = this };
+            if (confirmation.ShowDialog() != true || confirmation.SelectedLicense is not { } selected) return;
+
+            SetBusy(true, "Отзыв лицензии на HonestLicenseServer…");
+            using var revokeCts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            await service.RevokeAsync(selected, revokeCts.Token);
+            _access.Audit($"License revoked; client={license.ClientId}; license={selected.Id}");
+            SetBusy(false);
+            await LoadPublishedAsync();
+            if (_lastPublishedLoadSucceeded)
+                StatusText.Text = "Лицензия отозвана. Клиент, устройства и история сохранены.";
+        }
+        catch (Exception ex)
+        {
+            _access.Audit($"License revoke failed; client={license.ClientId}");
+            ShowWarning("Не удалось отозвать лицензию: " + ex.Message);
+        }
+        finally { SetBusy(false); }
     }
 
     private void AddMissingButton_Click(object sender, RoutedEventArgs e)
@@ -766,7 +949,7 @@ public partial class LicenseManagerWindow : Window
 
     private void OperatorDevicesButton_Click(object sender, RoutedEventArgs e)
     {
-        var window = new OperatorDevicesWindow(_manifest.OperatorDevices ?? []) { Owner = this };
+        var window = new OperatorDevicesWindow(_manifest.OperatorDevices ?? [], _access) { Owner = this };
         if (window.ShowDialog() == true) _manifest.OperatorDevices = window.Devices.ToList();
     }
 

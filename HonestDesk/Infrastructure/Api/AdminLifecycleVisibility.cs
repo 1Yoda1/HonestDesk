@@ -8,6 +8,10 @@ public static class AdminLifecycleVisibility
     public static bool DeviceIsVisible(AdminDevice device, bool showDeleted) =>
         showDeleted || !string.Equals(device.Status, "Deleted", StringComparison.OrdinalIgnoreCase);
 
+    public static bool CanReleaseDeviceId(AdminDevice device) =>
+        string.Equals(device.Status, "Deleted", StringComparison.OrdinalIgnoreCase) &&
+        !device.DeviceIdReleased;
+
     public static AdminDevice? FindCurrentBoundDevice(
         IEnumerable<AdminDevice> devices, string clientId, string externalDeviceId)
     {

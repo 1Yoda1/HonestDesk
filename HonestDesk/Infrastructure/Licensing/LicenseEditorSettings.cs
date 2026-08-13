@@ -6,8 +6,8 @@ namespace HonestDesk.Infrastructure.Licensing
 {
     public sealed class LicenseEditorSettings
     {
-        public string PrivateKeyPath { get; set; }
-        public string PublicKeyPath { get; set; }
+        public string PrivateKeyPath { get; set; } = string.Empty;
+        public string PublicKeyPath { get; set; } = string.Empty;
         public string KeyId { get; set; } = "primary-2026";
         public int ValidityDays { get; set; } = 365;
         private static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HonestDesk", "license-editor-settings.json");
@@ -27,6 +27,12 @@ namespace HonestDesk.Infrastructure.Licensing
             }
             catch { return new(); }
         }
-        public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)); File.WriteAllText(SettingsPath, JsonConvert.SerializeObject(this, Formatting.Indented)); }
+        public void Save()
+        {
+            string? directory = Path.GetDirectoryName(SettingsPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+            File.WriteAllText(SettingsPath, JsonConvert.SerializeObject(this, Formatting.Indented));
+        }
     }
 }

@@ -114,20 +114,23 @@ namespace HonestDesk.Infrastructure.Licensing
             MimeMessage message,
             out DeviceRegistrationRequest request)
         {
-            request = null;
+            request = new DeviceRegistrationRequest();
             if (message == null ||
                 message.Subject?.IndexOf(SubjectMarker, StringComparison.Ordinal) < 0)
             {
                 return false;
             }
 
-            MimePart attachment = message.Attachments
+                MimePart? attachment = message.Attachments
                 .OfType<MimePart>()
                 .FirstOrDefault(part => string.Equals(
                     part.FileName,
                     "honestflow-device-registration.json",
                     StringComparison.OrdinalIgnoreCase));
             if (attachment == null)
+                return false;
+
+            if (attachment.Content is null)
                 return false;
 
             try
@@ -139,20 +142,23 @@ namespace HonestDesk.Infrastructure.Licensing
 
                 stream.Position = 0;
                 using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
-                request = JsonConvert.DeserializeObject<DeviceRegistrationRequest>(reader.ReadToEnd());
-                return ValidateRequest(request);
+                DeviceRegistrationRequest? parsed = JsonConvert.DeserializeObject<DeviceRegistrationRequest>(reader.ReadToEnd());
+                if (parsed is null || !ValidateRequest(parsed))
+                    return false;
+
+                request = parsed;
+                return true;
             }
             catch (Exception ex) when (
                 ex is IOException ||
                 ex is JsonException ||
                 ex is DecoderFallbackException)
             {
-                request = null;
                 return false;
             }
         }
 
-        private static bool ValidateRequest(DeviceRegistrationRequest request)
+        private static bool ValidateRequest(DeviceRegistrationRequest? request)
         {
             return request != null &&
                    request.SchemaVersion == 1 &&

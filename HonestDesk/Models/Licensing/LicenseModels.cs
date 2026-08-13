@@ -27,21 +27,21 @@ namespace HonestDesk.Models.Licensing
 
         public static string GetDisplayName(LicenseFeature feature)
         {
-            FieldInfo field = typeof(LicenseFeature).GetField(feature.ToString());
+            FieldInfo? field = typeof(LicenseFeature).GetField(feature.ToString());
             return field?.GetCustomAttribute<DescriptionAttribute>()?.Description
                 ?? feature.ToString();
         }
     }
-    public sealed class LicensedDevice { public string DeviceId { get; set; } public string Name { get; set; } public string Address { get; set; } public bool Enabled { get; set; } = true; public string Comment { get; set; } }
-    public sealed class OperatorDevice { public string DeviceId { get; set; } public string Name { get; set; } public bool Enabled { get; set; } = true; public string Comment { get; set; } }
+    public sealed class LicensedDevice { public string DeviceId { get; set; } = string.Empty; public string Name { get; set; } = string.Empty; public string? Address { get; set; } public bool Enabled { get; set; } = true; public string Comment { get; set; } = string.Empty; }
+    public sealed class OperatorDevice { public string DeviceId { get; set; } = string.Empty; public string Name { get; set; } = string.Empty; public bool Enabled { get; set; } = true; public string Comment { get; set; } = string.Empty; }
     public sealed class ClientLicense
     {
         [JsonIgnore]
         public string DisplayName { get; set; } = "";
 
-        public string ClientId { get; set; }
+        public string ClientId { get; set; } = string.Empty;
         public bool Enabled { get; set; } = true;
-        public string MinHonestFlowVersion { get; set; }
+        public string MinHonestFlowVersion { get; set; } = string.Empty;
         public int OfflineGraceHours { get; set; }
         public List<LicenseFeature> Features { get; set; } = new();
         public List<LicensedDevice> Devices { get; set; } = new();
@@ -58,8 +58,8 @@ namespace HonestDesk.Models.Licensing
     public sealed class LicenseSignatureEnvelope
     {
         public const string AlgorithmName = "ECDSA_P256_SHA256";
-        public string KeyId { get; set; }
-        public string Algorithm { get; set; }
-        public string Signature { get; set; }
+        public string KeyId { get; set; } = string.Empty;
+        public string Algorithm { get; set; } = string.Empty;
+        public string Signature { get; set; } = string.Empty;
     }
 }

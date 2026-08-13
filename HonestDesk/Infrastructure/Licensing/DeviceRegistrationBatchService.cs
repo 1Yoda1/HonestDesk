@@ -28,29 +28,30 @@ namespace HonestDesk.Infrastructure.Licensing
             var requestKeys = new HashSet<string>(StringComparer.Ordinal);
             var result = new List<DeviceRegistrationBatchItem>();
 
-            foreach (DeviceRegistrationInboxItem inboxItem in inboxItems ?? Array.Empty<DeviceRegistrationInboxItem>())
+            foreach (DeviceRegistrationInboxItem? inboxItem in inboxItems ?? Array.Empty<DeviceRegistrationInboxItem>())
             {
-                DeviceRegistrationRequest request = inboxItem?.Request;
-                if (request == null)
+                if (inboxItem is null)
                     continue;
+
+                DeviceRegistrationRequest request = inboxItem.Request;
 
                 string requestKey = request.ClientId + "\n" + request.DeviceId;
                 DeviceRegistrationBatchStatus status;
-                string existingOwnerClientId = null;
+                string? existingOwnerClientId = null;
 
                 if (!requestKeys.Add(requestKey))
                 {
                     status = DeviceRegistrationBatchStatus.DuplicateRequest;
                 }
-                else if (!clients.TryGetValue(request.ClientId, out ClientLicense client))
+                else if (!clients.TryGetValue(request.ClientId, out ClientLicense? client) || client is null)
                 {
                     status = DeviceRegistrationBatchStatus.UnknownClient;
                 }
-                else if (deviceOwners.TryGetValue(request.DeviceId, out string ownerClientId))
+                else if (deviceOwners.TryGetValue(request.DeviceId, out string? ownerClientId) && ownerClientId is not null)
                 {
                     if (string.Equals(ownerClientId, request.ClientId, StringComparison.Ordinal))
                     {
-                        LicensedDevice existingDevice = client.Devices?.FirstOrDefault(device =>
+                        LicensedDevice? existingDevice = client.Devices?.FirstOrDefault(device =>
                             string.Equals(device?.DeviceId, request.DeviceId, StringComparison.Ordinal));
                         status = existingDevice != null &&
                                  string.IsNullOrWhiteSpace(existingDevice.Address) &&
@@ -76,7 +77,7 @@ namespace HonestDesk.Infrastructure.Licensing
                 {
                     InboxItem = inboxItem,
                     Status = status,
-                    ExistingOwnerClientId = existingOwnerClientId
+                    ExistingOwnerClientId = existingOwnerClientId ?? string.Empty
                 });
             }
 
@@ -104,7 +105,7 @@ namespace HonestDesk.Infrastructure.Licensing
 
                 if (item.Status == DeviceRegistrationBatchStatus.AddressUpdate)
                 {
-                    LicensedDevice existingDevice = client.Devices.FirstOrDefault(device =>
+                    LicensedDevice? existingDevice = client.Devices.FirstOrDefault(device =>
                         string.Equals(device?.DeviceId, request.DeviceId, StringComparison.Ordinal));
                     if (existingDevice != null &&
                         string.IsNullOrWhiteSpace(existingDevice.Address) &&

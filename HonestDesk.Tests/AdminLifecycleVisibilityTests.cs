@@ -71,4 +71,17 @@ public class AdminLifecycleVisibilityTests
             AdminLifecycleVisibility.FindCurrentBoundDevice(devices, "client-a", "device-x"));
         Assert.Contains("multiple current Device rows", exception.Message);
     }
+
+    [Theory]
+    [InlineData("Deleted", false, true)]
+    [InlineData("Deleted", true, false)]
+    [InlineData("Active", false, false)]
+    [InlineData("Disabled", false, false)]
+    public void Release_is_available_only_for_bound_deleted_device(
+        string status, bool released, bool expected)
+    {
+        var device = new AdminDevice { Status = status, DeviceIdReleased = released };
+
+        Assert.Equal(expected, AdminLifecycleVisibility.CanReleaseDeviceId(device));
+    }
 }

@@ -27,7 +27,7 @@ namespace HonestDesk.Infrastructure
             Write("INFO", message);
         }
 
-        public static void Error(string message, Exception exception = null)
+        public static void Error(string message, Exception? exception = null)
         {
             var text = exception == null
                 ? message
@@ -57,7 +57,9 @@ namespace HonestDesk.Infrastructure
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                string? directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
                 File.AppendAllText(path, line, Encoding.UTF8);
                 return true;
             }

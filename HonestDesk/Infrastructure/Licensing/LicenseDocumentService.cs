@@ -28,7 +28,7 @@ namespace HonestDesk.Infrastructure.Licensing
         }
         public bool Verify(byte[] json, byte[] signatureFile, string publicKeyPath, out string error)
         {
-            error = null; try {
+            error = string.Empty; try {
                 if (string.IsNullOrWhiteSpace(publicKeyPath) || !File.Exists(publicKeyPath)) throw new InvalidOperationException("Публичный ключ не настроен.");
                 var e = JsonConvert.DeserializeObject<LicenseSignatureEnvelope>(Encoding.UTF8.GetString(signatureFile));
                 if (e == null || e.Algorithm != LicenseSignatureEnvelope.AlgorithmName) throw new InvalidDataException("Неподдерживаемый формат подписи.");
@@ -51,7 +51,9 @@ namespace HonestDesk.Infrastructure.Licensing
         private static byte[] Sign(byte[] json, string keyId, string pem) { using ECDsa key = ECDsa.Create(); key.ImportFromPem(pem); if (key.KeySize != 256) throw new CryptographicException("Требуется ECDSA P-256 key."); byte[] s = key.SignData(json, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence); return new UTF8Encoding(false).GetBytes(JsonConvert.SerializeObject(new LicenseSignatureEnvelope { KeyId = keyId, Algorithm = LicenseSignatureEnvelope.AlgorithmName, Signature = Convert.ToBase64String(s) }, Formatting.Indented)); }
         private static void SafeReplacePair(string jp, byte[] json, string sp, byte[] sig)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(jp)));
+            string? directory = Path.GetDirectoryName(Path.GetFullPath(jp));
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
             string stamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff"), jt = jp + ".tmp-" + Guid.NewGuid().ToString("N"), st = sp + ".tmp-" + Guid.NewGuid().ToString("N");
             string jb = jp + ".bak-" + stamp, sb = sp + ".bak-" + stamp; bool hadJson = File.Exists(jp), hadSig = File.Exists(sp);
             File.WriteAllBytes(jt, json); File.WriteAllBytes(st, sig); if (hadJson) File.Copy(jp, jb, true); if (hadSig) File.Copy(sp, sb, true);

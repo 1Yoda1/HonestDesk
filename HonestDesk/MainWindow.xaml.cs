@@ -806,13 +806,12 @@ public partial class MainWindow : Window
             System.Windows.MessageBox.Show(this, "Выберите заявку регистрации устройства.", "HonestDesk", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        if (System.Windows.MessageBox.Show(this,
-                $"Отклонить регистрацию устройства «{request.MachineName}»?",
-                "HonestLicenseServer", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        var dialog = new RejectDeviceRequestWindow { Owner = this };
+        if (dialog.ShowDialog() != true) return;
         _resolvingDeviceRequest = true;
         try
         {
-            await CreateApiClient().RejectDeviceRequestAsync(requestId, "Отклонено оператором HonestDesk", CancellationToken.None);
+            await CreateApiClient().RejectDeviceRequestAsync(requestId, dialog.Reason, CancellationToken.None);
             _logger.Info($"Device request rejected through API: {requestId}");
             await CheckNowAsync();
         }
