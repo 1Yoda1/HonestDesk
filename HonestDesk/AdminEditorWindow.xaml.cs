@@ -24,6 +24,7 @@ public partial class AdminEditorWindow : Window
     private string _baselineJson = "";
     private bool _loaded;
     private bool _busy;
+    private bool _serviceInstallHasPassword;
     private readonly HashSet<string> _serverClientIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly DateTimeOffset _sessionUntilUtc;
     private readonly DispatcherTimer _sessionTimer = new() { Interval = TimeSpan.FromSeconds(10) };
@@ -99,6 +100,14 @@ public partial class AdminEditorWindow : Window
             IReadOnlyList<AdminClient> serverClients = await api.GetClientsAsync(cts.Token, includeInactive: true);
             IReadOnlyList<AdminVersion> serverVersions = await api.GetVersionsAsync(cts.Token);
             IReadOnlyList<AdminAsset> serverAssets = await api.GetAssetsAsync(null, cts.Token);
+            AdminServiceInstallAccessSettings serviceInstallAccess =
+                await api.GetServiceInstallAccessAsync(cts.Token);
+            _serviceInstallHasPassword = serviceInstallAccess.HasPassword;
+            ServiceInstallEnabledCheck.IsChecked = serviceInstallAccess.IsEnabled;
+            ServiceInstallPasswordBox.Clear();
+            ServiceInstallPasswordStateText.Text = serviceInstallAccess.HasPassword
+                ? "Пароль настроен; его значение сервер не возвращает."
+                : "Пароль ещё не настроен.";
             AssetsGrid.ItemsSource = serverAssets
                 .OrderBy(x => x.Component).ThenByDescending(x => x.UpdatedAtUtc).ThenBy(x => x.Architecture).ToList();
             _serverClientIds.Clear();
@@ -500,7 +509,51 @@ public partial class AdminEditorWindow : Window
     {
         _busy = busy;
         PublishButton.IsEnabled = !busy;
+        ServiceInstallSaveButton.IsEnabled = !busy;
         if (status is not null) StatusText.Text = status;
+    }
+
+    private async void SaveServiceInstallAccess_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        string newPassword = ServiceInstallPasswordBox.Password;
+        if (!string.IsNullOrEmpty(newPassword) && newPassword.Length < 10)
+        {
+            StatusText.Text = "Новый пароль сервисного доступа должен содержать не менее 10 символов.";
+            return;
+        }
+        if (ServiceInstallEnabledCheck.IsChecked == true && !_serviceInstallHasPassword &&
+            string.IsNullOrEmpty(newPassword))
+        {
+            StatusText.Text = "Перед включением сервисного доступа задайте новый пароль.";
+            return;
+        }
+
+        SetBusy(true, "Сохранение сервисного доступа…");
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            AdminServiceInstallAccessSettings saved = await CreateApiClient()
+                .PutServiceInstallAccessAsync(
+                    ServiceInstallEnabledCheck.IsChecked == true,
+                    string.IsNullOrEmpty(newPassword) ? null : newPassword,
+                    cts.Token);
+            _serviceInstallHasPassword = saved.HasPassword;
+            ServiceInstallEnabledCheck.IsChecked = saved.IsEnabled;
+            ServiceInstallPasswordBox.Clear();
+            ServiceInstallPasswordStateText.Text = "Пароль настроен; его значение сервер не возвращает.";
+            StatusText.Text = saved.IsEnabled
+                ? "Сервисный доступ к установке включён."
+                : "Сервисный доступ к установке отключён.";
+            _access.Audit($"Service install access updated; enabled={saved.IsEnabled}");
+        }
+        catch (Exception ex)
+        {
+            ServiceInstallPasswordBox.Clear();
+            StatusText.Text = "Не удалось сохранить сервисный доступ: " + ex.Message;
+            _access.Audit("Service install access update failed");
+        }
+        finally { SetBusy(false); }
     }
 
     private static void ClearDirectory(string path)
@@ -527,7 +580,7 @@ public partial class AdminEditorWindow : Window
 
     private void ClearSecrets()
     {
-        ClientPasswordBox.Clear(); TokenBox.Clear(); RuPasswordBox.Clear();
+        ClientPasswordBox.Clear(); TokenBox.Clear(); RuPasswordBox.Clear(); ServiceInstallPasswordBox.Clear();
     }
 
     private static void SelectCombo(System.Windows.Controls.ComboBox combo, string value) =>

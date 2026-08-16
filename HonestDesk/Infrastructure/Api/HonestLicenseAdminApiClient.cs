@@ -64,6 +64,24 @@ public sealed class HonestLicenseAdminApiClient
         return JsonConvert.DeserializeObject<AdminClientLicensePolicy>(await response.Content.ReadAsStringAsync(token))
             ?? throw new InvalidDataException("HonestLicenseServer returned an empty client license policy.");
     }
+    public async Task<AdminServiceInstallAccessSettings> GetServiceInstallAccessAsync(CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(
+            HttpMethod.Get, "api/admin/service-install-access", null, token);
+        return JsonConvert.DeserializeObject<AdminServiceInstallAccessSettings>(
+                   await response.Content.ReadAsStringAsync(token))
+               ?? throw new InvalidDataException("HonestLicenseServer returned empty service installation settings.");
+    }
+    public async Task<AdminServiceInstallAccessSettings> PutServiceInstallAccessAsync(
+        bool isEnabled, string? newPassword, CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(
+            HttpMethod.Put, "api/admin/service-install-access",
+            new { isEnabled, newPassword = string.IsNullOrWhiteSpace(newPassword) ? null : newPassword }, token);
+        return JsonConvert.DeserializeObject<AdminServiceInstallAccessSettings>(
+                   await response.Content.ReadAsStringAsync(token))
+               ?? throw new InvalidDataException("HonestLicenseServer returned empty service installation settings.");
+    }
     public Task ApproveDeviceRequestAsync(int id, string? name, string? address, string? comment, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/device-requests/{id}/approve", new { name, address, comment }, token);
     public Task RejectDeviceRequestAsync(int id, string? comment, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/device-requests/{id}/reject", new { comment }, token);
     public Task ResolveSupportRequestAsync(int id, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/support-requests/{id}/resolve", null, token);
@@ -174,3 +192,9 @@ public sealed class AdminAsset
 public sealed class AdminComponentOverride { public string? Component { get; set; } public string? RequiredVersion { get; set; } }
 public sealed class AdminClientIntegrationSettings { public string? ClientId { get; set; } public string? IdentificationCode { get; set; } public string? ChzToken { get; set; } public bool RuDesktopEnabled { get; set; } public bool RuDesktopAutoOfferPasswordSetup { get; set; } public bool IsConfigured { get; set; } }
 public sealed class AdminClientLicensePolicy { public string? ClientId { get; set; } public bool? IsEnabled { get; set; } }
+public sealed class AdminServiceInstallAccessSettings
+{
+    public bool IsEnabled { get; set; }
+    public bool HasPassword { get; set; }
+    public DateTimeOffset? UpdatedAtUtc { get; set; }
+}
