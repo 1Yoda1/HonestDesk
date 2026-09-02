@@ -36,15 +36,20 @@ public sealed class LicenseGrantPublicationBuilder
                 // client device with the same identity. Publish only that grant.
                 if (operatorDeviceIds.Contains(device.DeviceId)) continue;
 
+                DateTimeOffset validUntilUtc = DeviceServiceGrantSemantics.ResolveValidUntilUtc(
+                    manifest.ValidUntilUtc, device.ServiceEnabled,
+                    device.ServiceValidUntilUtc, DateTimeOffset.UtcNow);
                 result.Add(BuildOne(new LicenseGrant
                 {
                     SchemaVersion = manifest.SchemaVersion, Revision = manifest.Revision,
-                    IssuedAtUtc = manifest.IssuedAtUtc, ValidUntilUtc = manifest.ValidUntilUtc,
+                    IssuedAtUtc = manifest.IssuedAtUtc, ValidUntilUtc = validUntilUtc,
                     ClientId = client.ClientId, DeviceId = device.DeviceId,
                     ClientEnabled = clientEnabled, DeviceEnabled = device.Enabled,
                     MinHonestFlowVersion = client.MinHonestFlowVersion,
                     OfflineGraceHours = client.OfflineGraceHours,
-                    Features = client.Features?.Distinct().ToList() ?? [], PointAddress = device.Address ?? string.Empty
+                    Features = DeviceServiceGrantSemantics.CreateDeviceFeatures(
+                        client.Features, device.ServiceEnabled),
+                    PointAddress = device.Address ?? string.Empty
                 }, keyId, pem));
             }
             foreach (OperatorDevice device in manifest.OperatorDevices ?? [])

@@ -93,16 +93,24 @@ public sealed class IncrementalLicenseGrantPublicationBuilder
                 if (operatorDeviceIds.Contains(device.DeviceId))
                     continue;
 
+                DateTimeOffset validUntilUtc = DeviceServiceGrantSemantics.ResolveValidUntilUtc(
+                    manifest.ValidUntilUtc, device.ServiceEnabled,
+                    device.ServiceValidUntilUtc, DateTimeOffset.UtcNow);
+
                 targets.Add(CreateTarget(new LicenseGrant
                 {
                     SchemaVersion = manifest.SchemaVersion,
+                    Revision = manifest.Revision,
+                    IssuedAtUtc = manifest.IssuedAtUtc,
+                    ValidUntilUtc = validUntilUtc,
                     ClientId = client.ClientId,
                     DeviceId = device.DeviceId,
                     ClientEnabled = clientEnabled,
                     DeviceEnabled = device.Enabled,
                     MinHonestFlowVersion = client.MinHonestFlowVersion,
                     OfflineGraceHours = client.OfflineGraceHours,
-                    Features = client.Features?.Distinct().OrderBy(feature => feature).ToList() ?? [],
+                    Features = DeviceServiceGrantSemantics.CreateDeviceFeatures(
+                        client.Features, device.ServiceEnabled),
                     PointAddress = device.Address ?? string.Empty
                 }));
             }
@@ -115,6 +123,9 @@ public sealed class IncrementalLicenseGrantPublicationBuilder
                 targets.Add(CreateTarget(new LicenseGrant
                 {
                     SchemaVersion = manifest.SchemaVersion,
+                    Revision = manifest.Revision,
+                    IssuedAtUtc = manifest.IssuedAtUtc,
+                    ValidUntilUtc = manifest.ValidUntilUtc,
                     ClientId = client.ClientId,
                     DeviceId = device.DeviceId,
                     ClientEnabled = clientEnabled,

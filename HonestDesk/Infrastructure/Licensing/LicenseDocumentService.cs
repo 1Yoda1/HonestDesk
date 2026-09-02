@@ -46,6 +46,9 @@ namespace HonestDesk.Infrastructure.Licensing
             if (clients.Any(c => string.IsNullOrWhiteSpace(c.ClientId))) throw new InvalidDataException("ClientId обязателен.");
             if (clients.GroupBy(c => c.ClientId, StringComparer.Ordinal).Any(g => g.Count() > 1)) throw new InvalidDataException("ClientId должен быть уникален.");
             if (clients.SelectMany(c => c.Devices ?? new()).Any(d => d?.Address != null && d.Address.Trim().Length > 500)) throw new InvalidDataException("Адрес точки не может быть длиннее 500 символов.");
+            if (clients.SelectMany(c => c.Devices ?? new()).Any(d => d?.ServiceEnabled == true &&
+                    (d.ServiceValidUntilUtc is null || d.ServiceValidUntilUtc <= DateTimeOffset.UtcNow)))
+                throw new InvalidDataException("Для HonestFlow Service укажите будущую дату окончания доступа.");
             foreach (var c in clients) { if (c.OfflineGraceHours < 0 || !Version.TryParse(c.MinHonestFlowVersion, out _)) throw new InvalidDataException($"Параметры клиента {c.ClientId} некорректны."); if ((c.Devices ?? new()).Where(d => !string.IsNullOrWhiteSpace(d.DeviceId)).GroupBy(d => d.DeviceId, StringComparer.Ordinal).Any(g => g.Count() > 1)) throw new InvalidDataException($"DeviceId клиента {c.ClientId} должен быть уникален."); }
         }
         private static byte[] Sign(byte[] json, string keyId, string pem) { using ECDsa key = ECDsa.Create(); key.ImportFromPem(pem); if (key.KeySize != 256) throw new CryptographicException("Требуется ECDSA P-256 key."); byte[] s = key.SignData(json, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence); return new UTF8Encoding(false).GetBytes(JsonConvert.SerializeObject(new LicenseSignatureEnvelope { KeyId = keyId, Algorithm = LicenseSignatureEnvelope.AlgorithmName, Signature = Convert.ToBase64String(s) }, Formatting.Indented)); }

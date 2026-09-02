@@ -14,7 +14,10 @@ namespace HonestDesk.Models.Licensing
         ViewAndRepair,
 
         [Description("Установка и обслуживание точки")]
-        InstallAndMaintenance
+        InstallAndMaintenance,
+
+        [Description("HonestFlow Service")]
+        Service
     }
     public static class LicenseFeatureCatalog
     {
@@ -32,7 +35,31 @@ namespace HonestDesk.Models.Licensing
                 ?? feature.ToString();
         }
     }
-    public sealed class LicensedDevice { public string DeviceId { get; set; } = string.Empty; public string Name { get; set; } = string.Empty; public string? Address { get; set; } public bool Enabled { get; set; } = true; public string Comment { get; set; } = string.Empty; }
+    public sealed class LicensedDevice
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? Address { get; set; }
+        public bool Enabled { get; set; } = true;
+        public string Comment { get; set; } = string.Empty;
+        public bool ServiceEnabled { get; set; }
+        public DateTimeOffset? ServiceValidUntilUtc { get; set; }
+
+        [JsonIgnore]
+        public DateTime? ServiceValidUntilDate
+        {
+            get => ServiceValidUntilUtc?.UtcDateTime.Date;
+            set => ServiceValidUntilUtc = value is null
+                ? null
+                : new DateTimeOffset(DateTime.SpecifyKind(
+                    value.Value.Date.AddDays(1).AddTicks(-1), DateTimeKind.Utc));
+        }
+
+        [JsonIgnore]
+        public string ServiceStatus => ServiceEnabled && ServiceValidUntilUtc is { } validUntil
+            ? $"Service до {validUntil:dd.MM.yyyy}"
+            : "Free";
+    }
     public sealed class OperatorDevice { public string DeviceId { get; set; } = string.Empty; public string Name { get; set; } = string.Empty; public bool Enabled { get; set; } = true; public string Comment { get; set; } = string.Empty; }
     public sealed class ClientLicense
     {

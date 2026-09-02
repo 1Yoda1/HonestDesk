@@ -142,6 +142,12 @@ public partial class LicenseManagerWindow : Window
             ShowWarning("Адрес точки не может быть длиннее 500 символов.");
             return false;
         }
+        if (_devices.Any(x => x.ServiceEnabled &&
+                              (x.ServiceValidUntilUtc is null || x.ServiceValidUntilUtc <= DateTimeOffset.UtcNow)))
+        {
+            ShowWarning("Для HonestFlow Service укажите будущую дату окончания доступа.");
+            return false;
+        }
 
         license.ClientId = clientId;
         license.DisplayName = ResolveName(clientId);
@@ -241,7 +247,7 @@ public partial class LicenseManagerWindow : Window
                     Enabled = first.ClientEnabled,
                     MinHonestFlowVersion = first.MinHonestFlowVersion,
                     OfflineGraceHours = first.OfflineGraceHours,
-                    Features = first.Features?.Distinct().ToList() ?? [],
+                    Features = first.Features?.Where(feature => feature != LicenseFeature.Service).Distinct().ToList() ?? [],
                     Devices = group.Select(x =>
                     {
                         devicesByPair.TryGetValue(LicenseKey(x.ClientId, x.DeviceId), out AdminDevice? serverDevice);
@@ -251,7 +257,11 @@ public partial class LicenseManagerWindow : Window
                             Name = serverDevice?.Name ?? x.DeviceId,
                             Address = serverDevice?.Address ?? x.PointAddress ?? "",
                             Enabled = x.DeviceEnabled,
-                            Comment = serverDevice?.Comment ?? ""
+                            Comment = serverDevice?.Comment ?? "",
+                            ServiceEnabled = !x.OperatorDevice && (x.Features ?? []).Contains(LicenseFeature.Service),
+                            ServiceValidUntilUtc = !x.OperatorDevice && (x.Features ?? []).Contains(LicenseFeature.Service)
+                                ? x.ValidUntilUtc
+                                : null
                         };
                     }).ToList()
                 });
@@ -742,7 +752,9 @@ public partial class LicenseManagerWindow : Window
         Name = value.Name,
         Address = value.Address,
         Enabled = value.Enabled,
-        Comment = value.Comment
+        Comment = value.Comment,
+        ServiceEnabled = value.ServiceEnabled,
+        ServiceValidUntilUtc = value.ServiceValidUntilUtc
     };
 
     private void ShowWarning(string message) => StatusText.Text = message;

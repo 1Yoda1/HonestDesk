@@ -134,6 +134,8 @@ namespace HonestDesk.Infrastructure.Licensing
                         ? null
                         : request.Address.Trim(),
                     Enabled = true,
+                    ServiceEnabled = false,
+                    ServiceValidUntilUtc = null,
                     Comment = "Импорт заявки " + request.RequestedAtUtc
                         .ToUniversalTime()
                         .ToString("yyyy-MM-dd HH:mm:ss 'UTC'")

@@ -189,14 +189,14 @@ namespace HonestDesk.Infrastructure
                     grantIndex.Entries.TryGetValue(target.TargetHash, out var previous);
                     if (!keyChanged && previous != null && !previous.Revoked &&
                         previous.SemanticSha256 == target.SemanticSha256 &&
-                        (previous.ValidUntilUtc == manifest.ValidUntilUtc ||
+                        (previous.ValidUntilUtc == target.Grant.ValidUntilUtc ||
                          previous.ValidUntilUtc > DateTimeOffset.UtcNow.AddDays(30)))
                         continue;
                     changedGrants.Add(grantBuilder.BuildChanged(
                         target,
                         previous,
                         manifest.IssuedAtUtc,
-                        manifest.ValidUntilUtc));
+                        target.Grant.ValidUntilUtc));
                 }
                 foreach (var pair in grantIndex.Entries.ToList())
                 {

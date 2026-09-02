@@ -100,6 +100,16 @@
                                     <DataGridTextColumn Header="НАЗВАНИЕ" Binding="{Binding Name}" Width="*" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="АДРЕС ТОЧКИ" Binding="{Binding Address}" Width="1.3*" IsReadOnly="True"/>
                                     <DataGridCheckBoxColumn Header="ВКЛ" Binding="{Binding Enabled}" Width="48"/>
+                                    <DataGridCheckBoxColumn Header="SERVICE" Binding="{Binding ServiceEnabled}" Width="65"/>
+                                    <DataGridTemplateColumn Header="SERVICE ДО" Width="112">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate><TextBlock Text="{Binding ServiceValidUntilUtc, StringFormat={}{0:dd.MM.yyyy}}"/></DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate><DatePicker SelectedDate="{Binding ServiceValidUntilDate, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding ServiceEnabled}"/></DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="СТАТУС" Binding="{Binding ServiceStatus}" Width="130" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="КОММЕНТАРИЙ" Binding="{Binding Comment}" Width="*" IsReadOnly="True"/>
                                 </DataGrid.Columns>
                             </DataGrid>

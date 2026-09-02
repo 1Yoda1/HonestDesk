@@ -10,7 +10,9 @@ public sealed record DeviceLicensePolicy(
     bool InstallAndMaintenance,
     string MinimumHonestFlowVersion,
     int OfflineGraceHours,
-    int ValidityDays);
+    int ValidityDays,
+    bool ServiceEnabled,
+    DateTimeOffset? ServiceValidUntilUtc);
 
 public sealed class LicensePolicyRequiredException : Exception
 {
@@ -54,18 +56,24 @@ public sealed class ServerDeviceLicenseService
             ?? throw new InvalidOperationException("Одобренное устройство не найдено на сервере.");
         long revision = allLicenses.Count == 0 ? 1 : checked(allLicenses.Max(x => x.Revision) + 1);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        List<LicenseFeature> features = template?.Features?.Distinct().ToList() ?? [];
+        List<LicenseFeature> legacyFeatures = template?.Features?.ToList() ?? [];
         if (template is null && fallback is not null)
         {
-            if (fallback.ViewAndRepair) features.Add(LicenseFeature.ViewAndRepair);
-            if (fallback.InstallAndMaintenance) features.Add(LicenseFeature.InstallAndMaintenance);
+            if (fallback.ViewAndRepair) legacyFeatures.Add(LicenseFeature.ViewAndRepair);
+            if (fallback.InstallAndMaintenance) legacyFeatures.Add(LicenseFeature.InstallAndMaintenance);
         }
+
+        bool serviceEnabled = fallback?.ServiceEnabled == true;
+        DateTimeOffset legacyValidUntilUtc = template is not null && template.ValidUntilUtc > now
+            ? template.ValidUntilUtc
+            : now.AddDays(fallback?.ValidityDays ?? signing.ValidityDays);
+        DateTimeOffset serviceValidUntilUtc = DeviceServiceGrantSemantics.ResolveValidUntilUtc(
+            legacyValidUntilUtc, serviceEnabled, fallback?.ServiceValidUntilUtc, now);
         var manifest = new LicenseManifest
         {
             Revision = revision,
             IssuedAtUtc = now,
-            ValidUntilUtc = template is not null && template.ValidUntilUtc > now
-                ? template.ValidUntilUtc : now.AddDays(fallback?.ValidityDays ?? signing.ValidityDays),
+            ValidUntilUtc = legacyValidUntilUtc,
             Clients =
             [
                 new ClientLicense
@@ -74,8 +82,17 @@ public sealed class ServerDeviceLicenseService
                     Enabled = clientEnabled,
                     MinHonestFlowVersion = template?.MinHonestFlowVersion ?? fallback!.MinimumHonestFlowVersion,
                     OfflineGraceHours = template?.OfflineGraceHours ?? fallback!.OfflineGraceHours,
-                    Features = features,
-                    Devices = [new LicensedDevice { DeviceId = deviceId, Name = device.Name ?? deviceId, Address = device.Address ?? "", Comment = device.Comment ?? "", Enabled = true }]
+                    Features = DeviceServiceGrantSemantics.CreateDeviceFeatures(legacyFeatures, false),
+                    Devices =
+                    [
+                        new LicensedDevice
+                        {
+                            DeviceId = deviceId, Name = device.Name ?? deviceId,
+                            Address = device.Address ?? "", Comment = device.Comment ?? "", Enabled = true,
+                            ServiceEnabled = serviceEnabled,
+                            ServiceValidUntilUtc = serviceEnabled ? serviceValidUntilUtc : null
+                        }
+                    ]
                 }
             ]
         };
