@@ -23,13 +23,14 @@ public sealed class StateService
             AppState state = JsonSerializer.Deserialize<AppState>(json)
                 ?? throw new InvalidDataException("state.json contains no state object.");
             state.KnownUids ??= [];
+            state.KnownDiagnosticIds ??= [];
             state.Requests = (state.Requests ?? [])
                 .OfType<HelpRequest>()
                 .Where(x => !string.IsNullOrWhiteSpace(x.Uid))
                 .GroupBy(x => x.Uid, StringComparer.Ordinal)
                 .Select(x => x.OrderByDescending(value => value.CreatedAt).First())
                 .ToList();
-            if (state.SelectedSection is not ("Support" or "Clients" or "Licenses" or "Settings" or "Journal"))
+            if (state.SelectedSection is not ("Support" or "Diagnostics" or "Clients" or "Licenses" or "Settings" or "Journal"))
                 state.SelectedSection = "Support";
             return state;
         }
@@ -44,6 +45,7 @@ public sealed class StateService
     {
         AppPaths.EnsureDataDirectory();
         state.KnownUids = state.KnownUids.Distinct(StringComparer.OrdinalIgnoreCase).TakeLast(1000).ToList();
+        state.KnownDiagnosticIds = state.KnownDiagnosticIds.Distinct().TakeLast(1000).ToList();
         state.Requests = state.Requests
             .OrderByDescending(x => x.CreatedAt)
             .Take(200)

@@ -45,6 +45,13 @@
                         </StackPanel>
                     </Button>
                     <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="DiagnosticsButton_Click" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="▣" FontSize="17" Width="30"/>
+                            <TextBlock Text="Диагностика" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
                             Click="SettingsButton_Click" Margin="0,0,0,8">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="⚙" FontSize="17" Width="30"/>
@@ -194,12 +201,12 @@
                             </Style>
                         </DataGrid.Resources>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="ВРЕМЯ" Binding="{Binding CreatedAt, StringFormat={}{0:dd.MM HH:mm}}" Width="110"/>
-                            <DataGridTextColumn Header="КЛИЕНТ" Binding="{Binding ClientName}" Width="1.3*"/>
+                            <DataGridTextColumn Header="ВРЕМЯ" Binding="{Binding CreatedAt, StringFormat={}{0:dd.MM HH:mm}}" Width="105"/>
+                            <DataGridTextColumn Header="КЛИЕНТ" Binding="{Binding ClientName}" Width="*"/>
                             <DataGridTextColumn Header="КОМПЬЮТЕР" Binding="{Binding MachineName}" Width="*"/>
-                            <DataGridTextColumn Header="RUDESKTOP ID" Binding="{Binding RuDesktopId}" Width="125"/>
-                            <DataGridTextColumn Header="ПРОБЛЕМА" Binding="{Binding ProblemType}" Width="1.5*"/>
-                            <DataGridCheckBoxColumn Header="ГОТОВО" Binding="{Binding IsHandled}" Width="75"/>
+                            <DataGridTextColumn Header="ПРОБЛЕМА" Binding="{Binding ProblemType}" Width="1.15*"/>
+                            <DataGridTextColumn Header="ОПИСАНИЕ" Binding="{Binding MessagePreview}" Width="1.8*"/>
+                            <DataGridTextColumn Header="СТАТУС" Binding="{Binding StatusText}" Width="95"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -229,7 +236,7 @@
                             <Button Style="{StaticResource SoftButton}" Content="Копировать ID" Padding="8,10" Click="CopyIdButton_Click"/>
                             <Button Grid.Column="2" Style="{StaticResource SoftButton}" Content="Детали" Padding="8,10" Click="MailButton_Click"/>
                         </Grid>
-                        <Button Style="{StaticResource SoftButton}" Content="Обработать / одобрить"
+                        <Button x:Name="MarkHandledButton" Style="{StaticResource SoftButton}" Content="Обработать / одобрить"
                                 Click="MarkHandledButton_Click" Padding="14,9" Margin="0,0,0,6"/>
                         <Button Style="{StaticResource SoftButton}" Content="Отклонить регистрацию"
                                 Click="RejectDeviceRequestButton_Click" Padding="14,9"/>

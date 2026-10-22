@@ -5,6 +5,13 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Windows.Data;
+using System.Security.Cryptography;
+using WpfBinding = System.Windows.Data.Binding;
+using WpfBrush = System.Windows.Media.Brush;
+using WpfButton = System.Windows.Controls.Button;
+using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
+using WpfOrientation = System.Windows.Controls.Orientation;
 using HonestDesk.Models;
 using HonestDesk.Services;
 using HonestDesk.Infrastructure.Api;
@@ -23,6 +30,7 @@ public partial class MainWindow : Window
     private readonly AdminAccessService _adminAccess = new();
     private readonly DispatcherTimer _timer = new();
     private readonly ObservableCollection<HelpRequest> _requests = [];
+    private readonly ObservableCollection<AdminDiagnosticArchive> _diagnosticArchives = [];
     private readonly Forms.NotifyIcon _notifyIcon = new();
     private AppSettings _settings;
     private AppState _state;
@@ -36,7 +44,10 @@ public partial class MainWindow : Window
     private FrameworkElement? _adminContent;
     private FrameworkElement? _licenseContent;
     private FrameworkElement? _settingsContent;
+    private FrameworkElement? _diagnosticsContent;
+    private System.Windows.Controls.DataGrid? _diagnosticsGrid;
     private HelpRequest? _lastNotifiedRequest;
+    private AdminDiagnosticArchive? _lastNotifiedDiagnostic;
     private DateTimeOffset _adminSessionUntilUtc;
 
     public MainWindow()
@@ -144,7 +155,7 @@ public partial class MainWindow : Window
         _notifyIcon.ContextMenuStrip = menu;
         _notifyIcon.Visible = true;
         _notifyIcon.DoubleClick += (_, _) => Dispatcher.Invoke(ShowFromTray);
-        _notifyIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(() => OpenRequest(_lastNotifiedRequest));
+        _notifyIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(async () => await OpenLastNotificationAsync());
     }
 
     private void ConfigureTimer()
@@ -178,6 +189,7 @@ public partial class MainWindow : Window
                 _logger.Error("Remote access key is not available", ex);
             }
             IReadOnlyList<AdminSupportRequest> support = await api.GetSupportRequestsAsync(null, cts.Token);
+            IReadOnlyList<AdminDiagnosticArchive> diagnostics = await api.GetDiagnosticArchivesAsync(cts.Token);
             IReadOnlyList<AdminDeviceRequest> devices = await api.GetDeviceRequestsAsync("Pending", cts.Token);
             IReadOnlyList<AdminDevice> registeredDevices = await api.GetDevicesAsync(null, cts.Token);
             IReadOnlyList<AdminLicense> licenses = await api.GetLicensesAsync(null, cts.Token);
@@ -200,7 +212,16 @@ public partial class MainWindow : Window
                 .ToDictionary(x => x.Uid, StringComparer.Ordinal);
             List<HelpRequest> newRequests = incoming
                 .Where(x => !existing.ContainsKey(x.Uid) && !x.IsHandled).ToList();
+            List<AdminDiagnosticArchive> newDiagnostics = diagnostics
+                .Where(x => x.Status == "Available" && !_state.KnownDiagnosticIds.Contains(x.Id))
+                .OrderBy(x => x.CreatedAtUtc)
+                .ToList();
             _state.Requests = incoming;
+            _diagnosticArchives.Clear();
+            foreach (AdminDiagnosticArchive archive in diagnostics.OrderByDescending(x => x.CreatedAtUtc))
+                _diagnosticArchives.Add(archive);
+            foreach (int id in newDiagnostics.Select(x => x.Id))
+                _state.KnownDiagnosticIds.Add(id);
             SetStatus(remoteKeyError is null ? $"Сервер: заявок {incoming.Count}" :
                 "Ключ RuDesktop не готов: " + remoteKeyError, remoteKeyError is null ? "#48D39C" : "#F3A847");
             SideLastCheckText.Text = $"Последняя проверка: {DateTime.Now:HH:mm:ss}";
@@ -213,6 +234,8 @@ public partial class MainWindow : Window
 
             _stateService.Save(_state);
             ReloadRequests();
+            foreach (AdminDiagnosticArchive archive in newDiagnostics)
+                await ShowDiagnosticNotificationAsync(archive);
         }
         catch (Exception ex)
         {
@@ -239,7 +262,7 @@ public partial class MainWindow : Window
         MessageId = value.Id.ToString(),
         Subject = value.Subject ?? "Запрос поддержки",
         ClientId = value.ClientId ?? "",
-        ClientName = value.ClientId ?? "Клиент HonestFlow",
+        ClientName = device?.ClientName ?? value.ClientId ?? "Клиент HonestFlow",
         MachineName = device?.Name ?? value.ExternalDeviceId ?? "",
         DeviceId = value.ExternalDeviceId ?? "",
         Address = device?.Address ?? "",
@@ -249,6 +272,7 @@ public partial class MainWindow : Window
         ServerStatus = value.Status ?? "",
         ProblemType = value.Subject ?? "Запрос поддержки",
         Message = value.Message ?? "",
+        Contact = value.Contact ?? "",
         CreatedAt = value.CreatedAtUtc,
         IsHandled = string.Equals(value.Status, "Resolved", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(value.Status, "Closed", StringComparison.OrdinalIgnoreCase) ||
@@ -299,10 +323,28 @@ public partial class MainWindow : Window
     private void ShowNotification(HelpRequest request)
     {
         _lastNotifiedRequest = request;
+        _lastNotifiedDiagnostic = null;
         _notifyIcon.ShowBalloonTip(10000,
             string.IsNullOrWhiteSpace(request.ClientName) ? "Новая заявка HonestFlow" : request.ClientName,
             string.IsNullOrWhiteSpace(request.ProblemType) ? "Запрос помощи" : request.ProblemType,
             Forms.ToolTipIcon.Info);
+    }
+
+    private async Task OpenLastNotificationAsync()
+    {
+        ShowFromTray();
+        if (_lastNotifiedDiagnostic is not { } diagnostic)
+        {
+            OpenRequest(_lastNotifiedRequest);
+            return;
+        }
+        await ShowDiagnosticsSectionAsync();
+        if (_diagnosticsGrid is not null)
+        {
+            AdminDiagnosticArchive? item = _diagnosticArchives.FirstOrDefault(x => x.Id == diagnostic.Id);
+            _diagnosticsGrid.SelectedItem = item;
+            if (item is not null) _diagnosticsGrid.ScrollIntoView(item);
+        }
     }
 
     private void ReloadRequests()
@@ -331,6 +373,9 @@ public partial class MainWindow : Window
         DetailsText.Foreground = request is null
             ? (System.Windows.Media.Brush)FindResource("Muted")
             : (System.Windows.Media.Brush)FindResource("Ink");
+        bool isSupportRequest = request is not null && TryGetSupportRequestId(request, out _);
+        MarkHandledButton.Content = isSupportRequest ? "Выполнено" : "Обработать / одобрить";
+        MarkHandledButton.IsEnabled = request is not null && (!isSupportRequest || !request.IsHandled);
     }
 
     private static string BuildRequestDetails(HelpRequest request)
@@ -349,10 +394,17 @@ public partial class MainWindow : Window
                    $"Дата заявки: {requestedAt}\n\n{request.Message}";
         }
 
-        return $"Клиент: {request.ClientName}\nИНН: {request.InnMasked}\nАдрес: {request.Address}\n" +
-               $"Компьютер: {request.MachineName}  ·  {request.WindowsUser}\nRuDesktop ID: {request.RuDesktopId}\n" +
-               $"HonestFlow: {request.HonestFlowVersion}\nТип проблемы: {request.ProblemType}\n" +
-               $"Получено: {request.CreatedAt:dd.MM.yyyy HH:mm:ss zzz}\n\n{request.Message}";
+        return $"Заявка №: {DisplayValue(request.MessageId)}\n" +
+               $"Статус: {request.StatusText}\n" +
+               $"Клиент: {DisplayValue(request.ClientName)}\n" +
+               $"Адрес: {DisplayValue(request.Address)}\n" +
+               $"Компьютер: {DisplayValue(request.MachineName)}\n" +
+               $"Device ID: {DisplayValue(request.DeviceId)}\n" +
+               $"RuDesktop ID: {DisplayValue(request.RuDesktopId)}\n" +
+               $"Контакт: {DisplayValue(request.Contact)}\n" +
+               $"Версия HonestFlow: {DisplayValue(request.HonestFlowVersion)}\n" +
+               $"Отправлено: {request.CreatedAt.ToLocalTime():dd.MM.yyyy HH:mm:ss}\n\n" +
+               $"Описание проблемы:\n{DisplayValue(request.Message)}";
     }
 
     private static string DisplayValue(string? value) =>
@@ -474,6 +526,8 @@ public partial class MainWindow : Window
     private async void CheckButton_Click(object sender, RoutedEventArgs e) => await CheckNowAsync();
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsSection();
     private void DashboardButton_Click(object sender, RoutedEventArgs e) => ShowSection("Support", null);
+    private async void DiagnosticsButton_Click(object sender, RoutedEventArgs e) =>
+        await ShowDiagnosticsSectionAsync();
     private async void ConnectButton_Click(object sender, RoutedEventArgs e) => await ConnectSelectedAsync();
     private async void RequestsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e) => await ConnectSelectedAsync();
     private void RequestsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => ShowSelectedDetails();
@@ -658,6 +712,241 @@ public partial class MainWindow : Window
         ShowSection("Settings", _settingsContent);
     }
 
+    private async Task ShowDiagnosticsSectionAsync()
+    {
+        if (_diagnosticsContent is null)
+            _diagnosticsContent = BuildDiagnosticsContent();
+        ShowSection("Diagnostics", _diagnosticsContent);
+        await RefreshDiagnosticsAsync();
+    }
+
+    private FrameworkElement BuildDiagnosticsContent()
+    {
+        var refresh = new WpfButton
+        {
+            Content = "Обновить",
+            Padding = new Thickness(18, 9, 18, 9),
+            HorizontalAlignment = WpfHorizontalAlignment.Right
+        };
+        refresh.SetResourceReference(StyleProperty, "PrimaryButton");
+        refresh.Click += async (_, _) => await RefreshDiagnosticsAsync();
+
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(new StackPanel
+        {
+            Children =
+            {
+                new TextBlock { Text = "Диагностика", FontSize = 29, FontWeight = FontWeights.SemiBold },
+                new TextBlock
+                {
+                    Text = "Архивы HonestFlow хранятся в Cloud.ru 48 часов; история остаётся на сервере",
+                    Margin = new Thickness(0, 5, 0, 0),
+                    Foreground = (WpfBrush)FindResource("Muted")
+                }
+            }
+        });
+        Grid.SetColumn(refresh, 1);
+        header.Children.Add(refresh);
+
+        _diagnosticsGrid = new System.Windows.Controls.DataGrid
+        {
+            AutoGenerateColumns = false,
+            IsReadOnly = true,
+            HeadersVisibility = DataGridHeadersVisibility.Column,
+            GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
+            RowHeaderWidth = 0,
+            SelectionMode = DataGridSelectionMode.Single,
+            SelectionUnit = DataGridSelectionUnit.FullRow,
+            ItemsSource = _diagnosticArchives,
+            Margin = new Thickness(0, 20, 0, 16)
+        };
+        _diagnosticsGrid.Columns.Add(TextColumn("ОТПРАВЛЕНО", "CreatedAtUtc", 125, "dd.MM.yyyy HH:mm"));
+        _diagnosticsGrid.Columns.Add(TextColumn("КЛИЕНТ", "ClientName", 1));
+        _diagnosticsGrid.Columns.Add(TextColumn("КОМПЬЮТЕР", "DeviceName", 1));
+        _diagnosticsGrid.Columns.Add(TextColumn("АДРЕС", "Address", 1.3));
+        _diagnosticsGrid.Columns.Add(TextColumn("ФАЙЛ", "FileName", 1.4));
+        _diagnosticsGrid.Columns.Add(TextColumn("РАЗМЕР", "DisplaySize", 90));
+        _diagnosticsGrid.Columns.Add(TextColumn("СТАТУС", "DisplayStatus", 125));
+        _diagnosticsGrid.Columns.Add(TextColumn("УДАЛЕНИЕ", "ExpiresAtUtc", 125, "dd.MM.yyyy HH:mm"));
+        _diagnosticsGrid.MouseDoubleClick += async (_, _) => await DownloadSelectedDiagnosticAsync();
+
+        var download = new WpfButton { Content = "Скачать и открыть", Padding = new Thickness(18, 10, 18, 10) };
+        download.SetResourceReference(StyleProperty, "PrimaryButton");
+        download.Click += async (_, _) => await DownloadSelectedDiagnosticAsync();
+        var delete = new WpfButton
+        {
+            Content = "Удалить из облака",
+            Padding = new Thickness(18, 10, 18, 10),
+            Margin = new Thickness(10, 0, 0, 0)
+        };
+        delete.SetResourceReference(StyleProperty, "SoftButton");
+        delete.Click += async (_, _) => await DeleteSelectedDiagnosticAsync();
+        var actions = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Right,
+            Children = { download, delete }
+        };
+
+        var grid = new Grid { Margin = new Thickness(34, 28, 34, 30) };
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition());
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.Children.Add(header);
+        Grid.SetRow(_diagnosticsGrid, 1);
+        grid.Children.Add(_diagnosticsGrid);
+        Grid.SetRow(actions, 2);
+        grid.Children.Add(actions);
+        return grid;
+    }
+
+    private static DataGridTextColumn TextColumn(
+        string header, string path, double width, string? format = null)
+    {
+        var binding = new WpfBinding(path);
+        if (format is not null) binding.StringFormat = format;
+        return new DataGridTextColumn
+        {
+            Header = header,
+            Binding = binding,
+            Width = width < 10 ? new DataGridLength(width, DataGridLengthUnitType.Star) : new DataGridLength(width)
+        };
+    }
+
+    private async Task RefreshDiagnosticsAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            IReadOnlyList<AdminDiagnosticArchive> values = await CreateApiClient().GetDiagnosticArchivesAsync(cts.Token);
+            _diagnosticArchives.Clear();
+            foreach (AdminDiagnosticArchive value in values.OrderByDescending(x => x.CreatedAtUtc))
+                _diagnosticArchives.Add(value);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Diagnostic archive refresh failed", ex);
+            System.Windows.MessageBox.Show(this, ex.Message, "Ошибка HonestLicenseServer",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task ShowDiagnosticNotificationAsync(AdminDiagnosticArchive archive)
+    {
+        _lastNotifiedRequest = null;
+        _lastNotifiedDiagnostic = archive;
+        _notifyIcon.BalloonTipTitle = "Получена диагностика";
+        _notifyIcon.BalloonTipText = $"{archive.ClientName}, {archive.Address}, {archive.CreatedAtUtc.ToLocalTime():dd.MM HH:mm}";
+        _notifyIcon.ShowBalloonTip(5000);
+
+        var dialog = new DiagnosticArchiveNotificationWindow(archive) { Owner = this };
+        dialog.ShowDialog();
+        if (dialog.Action == DiagnosticArchiveNotificationAction.Download)
+            await DownloadDiagnosticAsync(archive);
+        else if (dialog.Action == DiagnosticArchiveNotificationAction.Delete)
+            await DeleteDiagnosticAsync(archive, askConfirmation: true);
+    }
+
+    private async Task DownloadSelectedDiagnosticAsync()
+    {
+        if (_diagnosticsGrid?.SelectedItem is AdminDiagnosticArchive archive)
+            await DownloadDiagnosticAsync(archive);
+    }
+
+    private async Task DownloadDiagnosticAsync(AdminDiagnosticArchive archive)
+    {
+        if (!archive.CanDownload)
+        {
+            ShowWarning(archive.Status switch
+            {
+                "Pending" => "Архив ещё загружается с рабочего места. Попробуйте обновить список через несколько минут.",
+                "Deleted" => "Архив был удалён из облака вручную. Запись сохранена в истории.",
+                "Expired" => "Архив был удалён из облака после 48 часов хранения. Запись сохранена в истории.",
+                _ => "Архив сейчас недоступен для скачивания. Запись сохранена в истории."
+            });
+            return;
+        }
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            AdminDiagnosticDownload download = await CreateApiClient()
+                .CreateDiagnosticDownloadAsync(archive.Id, cts.Token);
+            string folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Downloads", "HonestDesk Diagnostics");
+            Directory.CreateDirectory(folder);
+            string safeName = string.Concat((archive.FileName ?? $"diagnostics-{archive.Id}.zip")
+                .Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
+            string path = Path.Combine(folder, safeName);
+            if (File.Exists(path))
+                path = Path.Combine(folder,
+                    $"{Path.GetFileNameWithoutExtension(safeName)}-{DateTime.Now:yyyyMMdd-HHmmss}{Path.GetExtension(safeName)}");
+
+            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            using HttpResponseMessage response = await http.GetAsync(
+                download.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            response.EnsureSuccessStatusCode();
+            await using (Stream source = await response.Content.ReadAsStreamAsync(cts.Token))
+            await using (FileStream target = File.Create(path))
+                await source.CopyToAsync(target, cts.Token);
+
+            await using (FileStream verify = File.OpenRead(path))
+            {
+                string actualHash = Convert.ToHexString(await SHA256.HashDataAsync(verify, cts.Token));
+                if (!string.Equals(actualHash, archive.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Delete(path);
+                    throw new InvalidDataException("Контрольная сумма скачанного архива не совпала. Файл удалён.");
+                }
+            }
+
+            _logger.Info($"Diagnostic archive downloaded: id={archive.Id}, path={path}");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            await RefreshDiagnosticsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Diagnostic archive download failed: {archive.Id}", ex);
+            System.Windows.MessageBox.Show(this, ex.Message, "Не удалось скачать диагностику",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task DeleteSelectedDiagnosticAsync()
+    {
+        if (_diagnosticsGrid?.SelectedItem is AdminDiagnosticArchive archive)
+            await DeleteDiagnosticAsync(archive, askConfirmation: true);
+    }
+
+    private async Task DeleteDiagnosticAsync(AdminDiagnosticArchive archive, bool askConfirmation)
+    {
+        if (archive.Status is "Deleted" or "Expired")
+        {
+            ShowWarning("Файл уже удалён из облака; запись оставлена в истории.");
+            return;
+        }
+        if (askConfirmation && System.Windows.MessageBox.Show(this,
+                $"Удалить «{archive.FileName}» из Cloud.ru? Запись останется в истории.",
+                "Удаление диагностики", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            await CreateApiClient().DeleteDiagnosticArchiveAsync(archive.Id, CancellationToken.None);
+            _logger.Info($"Diagnostic archive deleted: id={archive.Id}");
+            await RefreshDiagnosticsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"Diagnostic archive delete failed: {archive.Id}", ex);
+            System.Windows.MessageBox.Show(this, ex.Message, "Не удалось удалить диагностику",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async void OpenJournalButton_Click(object sender, RoutedEventArgs e) =>
         await OpenJournalAsync();
 
@@ -728,6 +1017,7 @@ public partial class MainWindow : Window
                 ShowSection("Support", null);
                 break;
             case "Settings": ShowSettingsSection(); break;
+            case "Diagnostics": await ShowDiagnosticsSectionAsync(); break;
             case "Journal": await OpenJournalAsync(); break;
             default: ShowSection("Support", null); break;
         }

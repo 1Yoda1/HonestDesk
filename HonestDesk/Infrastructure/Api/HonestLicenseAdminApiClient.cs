@@ -18,6 +18,17 @@ public sealed class HonestLicenseAdminApiClient
     }
 
     public Task<IReadOnlyList<AdminSupportRequest>> GetSupportRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminSupportRequest>("api/admin/support-requests" + Query("status", status), token);
+    public Task<IReadOnlyList<AdminDiagnosticArchive>> GetDiagnosticArchivesAsync(CancellationToken token) =>
+        GetListAsync<AdminDiagnosticArchive>("api/admin/diagnostics", token);
+    public async Task<AdminDiagnosticDownload> CreateDiagnosticDownloadAsync(int id, CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(
+            HttpMethod.Post, $"api/admin/diagnostics/{id}/download", null, token);
+        return JsonConvert.DeserializeObject<AdminDiagnosticDownload>(await response.Content.ReadAsStringAsync(token))
+            ?? throw new InvalidDataException("HonestLicenseServer returned an empty diagnostic download response.");
+    }
+    public Task DeleteDiagnosticArchiveAsync(int id, CancellationToken token) =>
+        SendAsync(HttpMethod.Delete, $"api/admin/diagnostics/{id}", null, token);
     public async Task<AdminRemoteAccessKey?> GetRemoteAccessKeyAsync(CancellationToken token)
     {
         try
@@ -166,6 +177,41 @@ public sealed class HonestLicenseAdminApiException(HttpStatusCode statusCode, st
 { public HttpStatusCode StatusCode { get; } = statusCode; public string ResponseBody { get; } = responseBody; }
 
 public sealed class AdminSupportRequest { public int Id { get; set; } public string? ClientId { get; set; } public string? ExternalDeviceId { get; set; } public string? Subject { get; set; } public string? Message { get; set; } public string? Contact { get; set; } public string? HonestFlowVersion { get; set; } public string? Status { get; set; } public string? RemoteAccessCredentialId { get; set; } public string? RuDesktopId { get; set; } public DateTimeOffset CreatedAtUtc { get; set; } }
+public sealed class AdminDiagnosticArchive
+{
+    public int Id { get; set; }
+    public string? ClientId { get; set; }
+    public string? ClientName { get; set; }
+    public string? DeviceId { get; set; }
+    public string? DeviceName { get; set; }
+    public string? Address { get; set; }
+    public string? FileName { get; set; }
+    public long SizeBytes { get; set; }
+    public string? Sha256 { get; set; }
+    public string? HonestFlowVersion { get; set; }
+    public string? Status { get; set; }
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset? UploadedAtUtc { get; set; }
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public DateTimeOffset? LastDownloadedAtUtc { get; set; }
+    public DateTimeOffset? DeletedAtUtc { get; set; }
+    public string DisplaySize => SizeBytes > 0 ? $"{SizeBytes / 1024d / 1024d:N1} МБ" : "—";
+    public string DisplayStatus => Status switch
+    {
+        "Pending" => "Загрузка",
+        "Available" => "Доступен",
+        "Downloaded" => "Скачан",
+        "Deleted" => "Удалён",
+        "Expired" => "Удалён через 48 ч",
+        _ => Status ?? "—"
+    };
+    public bool CanDownload => Status is "Available" or "Downloaded";
+}
+public sealed class AdminDiagnosticDownload
+{
+    public string DownloadUrl { get; set; } = "";
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+}
 public sealed class AdminRemoteAccessKey { public string KeyId { get; set; } = ""; public string PublicKeyBase64 { get; set; } = ""; public string SignatureBase64 { get; set; } = ""; public string SigningKeyId { get; set; } = ""; }
 public sealed class AdminRemoteAccessCredential { public string CredentialId { get; set; } = ""; public string KeyId { get; set; } = ""; public string RuDesktopId { get; set; } = ""; public string CiphertextBase64 { get; set; } = ""; }
 public sealed class AdminDeviceRequest
