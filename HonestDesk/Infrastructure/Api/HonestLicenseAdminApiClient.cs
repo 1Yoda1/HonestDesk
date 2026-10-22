@@ -18,6 +18,24 @@ public sealed class HonestLicenseAdminApiClient
     }
 
     public Task<IReadOnlyList<AdminSupportRequest>> GetSupportRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminSupportRequest>("api/admin/support-requests" + Query("status", status), token);
+    public async Task<AdminRemoteAccessKey?> GetRemoteAccessKeyAsync(CancellationToken token)
+    {
+        try
+        {
+            using HttpResponseMessage response = await SendCoreAsync(HttpMethod.Get, "api/admin/remote-access/key", null, token);
+            return JsonConvert.DeserializeObject<AdminRemoteAccessKey>(await response.Content.ReadAsStringAsync(token));
+        }
+        catch (HonestLicenseAdminApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound) { return null; }
+    }
+    public Task PublishRemoteAccessKeyAsync(AdminRemoteAccessKey key, CancellationToken token) =>
+        SendAsync(HttpMethod.Put, "api/admin/remote-access/key", key, token);
+    public async Task<AdminRemoteAccessCredential> GetRemoteAccessCredentialAsync(int requestId, CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(HttpMethod.Get,
+            $"api/admin/support-requests/{requestId}/remote-access", null, token);
+        return JsonConvert.DeserializeObject<AdminRemoteAccessCredential>(await response.Content.ReadAsStringAsync(token))
+            ?? throw new InvalidDataException("Remote access credential response is empty.");
+    }
     public Task<IReadOnlyList<AdminDeviceRequest>> GetDeviceRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminDeviceRequest>("api/admin/device-requests" + Query("status", status), token);
     public Task<IReadOnlyList<AdminDeviceRequest>> GetAllDeviceRequestsAsync(CancellationToken token) =>
         GetListAsync<AdminDeviceRequest>("api/admin/device-requests?status=", token);
@@ -147,7 +165,9 @@ public sealed class HonestLicenseAdminApiException(HttpStatusCode statusCode, st
     (string.IsNullOrWhiteSpace(responseBody) ? "." : ": " + responseBody.Trim()))
 { public HttpStatusCode StatusCode { get; } = statusCode; public string ResponseBody { get; } = responseBody; }
 
-public sealed class AdminSupportRequest { public int Id { get; set; } public string? ClientId { get; set; } public string? ExternalDeviceId { get; set; } public string? Subject { get; set; } public string? Message { get; set; } public string? Contact { get; set; } public string? HonestFlowVersion { get; set; } public string? Status { get; set; } public DateTimeOffset CreatedAtUtc { get; set; } }
+public sealed class AdminSupportRequest { public int Id { get; set; } public string? ClientId { get; set; } public string? ExternalDeviceId { get; set; } public string? Subject { get; set; } public string? Message { get; set; } public string? Contact { get; set; } public string? HonestFlowVersion { get; set; } public string? Status { get; set; } public string? RemoteAccessCredentialId { get; set; } public string? RuDesktopId { get; set; } public DateTimeOffset CreatedAtUtc { get; set; } }
+public sealed class AdminRemoteAccessKey { public string KeyId { get; set; } = ""; public string PublicKeyBase64 { get; set; } = ""; public string SignatureBase64 { get; set; } = ""; public string SigningKeyId { get; set; } = ""; }
+public sealed class AdminRemoteAccessCredential { public string CredentialId { get; set; } = ""; public string KeyId { get; set; } = ""; public string RuDesktopId { get; set; } = ""; public string CiphertextBase64 { get; set; } = ""; }
 public sealed class AdminDeviceRequest
 {
     public int Id { get; set; }

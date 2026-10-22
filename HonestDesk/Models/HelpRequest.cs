@@ -13,6 +13,8 @@ public sealed class HelpRequest
     public string DeviceId { get; set; } = "";
     public string WindowsUser { get; set; } = "";
     public string RuDesktopId { get; set; } = "";
+    public string RemoteAccessCredentialId { get; set; } = "";
+    public string ServerStatus { get; set; } = "";
     public string HonestFlowVersion { get; set; } = "";
     public string ProblemType { get; set; } = "";
     public string Message { get; set; } = "";

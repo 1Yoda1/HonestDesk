@@ -58,6 +58,8 @@ public partial class SettingsWindow : Window
                 ? "https://api.honestflow.ru/"
                 : ApiBaseUrlBox.Text.Trim(),
             ProtectedAdminApiKey = DpapiProtector.Protect(AdminApiKeyBox.Password),
+            RemoteAccessKeyId = Settings.RemoteAccessKeyId,
+            ProtectedRemoteAccessPrivateKey = Settings.ProtectedRemoteAccessPrivateKey,
             ImapServer = ServerBox.Text.Trim(),
             ImapPort = port,
             UseSsl = SslCheck.IsChecked == true,

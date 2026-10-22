@@ -170,6 +170,13 @@ public partial class MainWindow : Window
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             HonestLicenseAdminApiClient api = CreateApiClient();
+            string? remoteKeyError = null;
+            try { await new RemoteAccessKeyService(_settingsService, _settings).EnsurePublishedAsync(api, cts.Token); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                remoteKeyError = ex.Message;
+                _logger.Error("Remote access key is not available", ex);
+            }
             IReadOnlyList<AdminSupportRequest> support = await api.GetSupportRequestsAsync(null, cts.Token);
             IReadOnlyList<AdminDeviceRequest> devices = await api.GetDeviceRequestsAsync("Pending", cts.Token);
             IReadOnlyList<AdminDevice> registeredDevices = await api.GetDevicesAsync(null, cts.Token);
@@ -192,9 +199,10 @@ public partial class MainWindow : Window
             Dictionary<string, HelpRequest> existing = _state.Requests
                 .ToDictionary(x => x.Uid, StringComparer.Ordinal);
             List<HelpRequest> newRequests = incoming
-                .Where(x => !existing.ContainsKey(x.Uid)).ToList();
+                .Where(x => !existing.ContainsKey(x.Uid) && !x.IsHandled).ToList();
             _state.Requests = incoming;
-            SetStatus($"Сервер: заявок {incoming.Count}", "#48D39C");
+            SetStatus(remoteKeyError is null ? $"Сервер: заявок {incoming.Count}" :
+                "Ключ RuDesktop не готов: " + remoteKeyError, remoteKeyError is null ? "#48D39C" : "#F3A847");
             SideLastCheckText.Text = $"Последняя проверка: {DateTime.Now:HH:mm:ss}";
 
             foreach (HelpRequest request in newRequests)
@@ -236,11 +244,15 @@ public partial class MainWindow : Window
         DeviceId = value.ExternalDeviceId ?? "",
         Address = device?.Address ?? "",
         HonestFlowVersion = value.HonestFlowVersion ?? "",
+        RuDesktopId = value.RuDesktopId ?? "",
+        RemoteAccessCredentialId = value.RemoteAccessCredentialId ?? "",
+        ServerStatus = value.Status ?? "",
         ProblemType = value.Subject ?? "Запрос поддержки",
         Message = value.Message ?? "",
         CreatedAt = value.CreatedAtUtc,
         IsHandled = string.Equals(value.Status, "Resolved", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(value.Status, "Closed", StringComparison.OrdinalIgnoreCase)
+                    string.Equals(value.Status, "Closed", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(value.Status, "Cancelled", StringComparison.OrdinalIgnoreCase)
         };
     }
 
@@ -349,6 +361,11 @@ public partial class MainWindow : Window
     private async Task ConnectSelectedAsync()
     {
         if (_connecting || SelectedRequest() is not { } request) return;
+        if (request.ServerStatus == "Cancelled")
+        {
+            ShowWarning("Пользователь отозвал доступ; эта заявка отменена.");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(request.RuDesktopId))
         {
             ShowWarning("В заявке отсутствует RuDesktop ID.");
@@ -360,16 +377,30 @@ public partial class MainWindow : Window
         {
             SetStatus("Получаем настройки…", "#F3A847");
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(35));
-            ClientMatchResult match = await _remoteClientConfigService.FindClientAsync(
-                request.ClientId, request.ClientName, request.InnMasked, cts.Token);
-            if (!match.Success)
+            string password;
+            if (!string.IsNullOrWhiteSpace(request.RemoteAccessCredentialId) &&
+                int.TryParse(request.MessageId, out int supportRequestId))
             {
-                SetStatus("Подключение не выполнено", "#F06B78");
-                ShowWarning(match.Error);
-                return;
+                AdminRemoteAccessCredential credential = await CreateApiClient()
+                    .GetRemoteAccessCredentialAsync(supportRequestId, cts.Token);
+                if (credential.CredentialId != request.RemoteAccessCredentialId ||
+                    credential.RuDesktopId != request.RuDesktopId)
+                    throw new InvalidDataException("Версия доступа или ID RuDesktop изменились. Обновите заявки.");
+                password = new RemoteAccessKeyService(_settingsService, _settings).Decrypt(credential);
             }
-            request.ClientId = match.Client!.ClientId;
-            string password = match.Client.RuDesktop.Password;
+            else
+            {
+                ClientMatchResult match = await _remoteClientConfigService.FindClientAsync(
+                    request.ClientId, request.ClientName, request.InnMasked, cts.Token);
+                if (!match.Success)
+                {
+                    SetStatus("Подключение не выполнено", "#F06B78");
+                    ShowWarning(match.Error);
+                    return;
+                }
+                request.ClientId = match.Client!.ClientId;
+                password = match.Client.RuDesktop.Password;
+            }
             if (string.IsNullOrWhiteSpace(password))
             {
                 SetStatus("Подключение не выполнено", "#F06B78");
@@ -392,6 +423,12 @@ public partial class MainWindow : Window
                 _ => "Не удалось запустить подключение RuDesktop. Подробности записаны в журнал."
             };
             ShowWarning(error);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("RuDesktop connection preparation failed", ex);
+            SetStatus("Подключение не выполнено", "#F06B78");
+            ShowWarning("Доступ недоступен или отозван. Обновите заявки и повторите попытку.");
         }
         finally { _connecting = false; }
     }

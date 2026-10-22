@@ -80,14 +80,14 @@
                                 <StackPanel Grid.Row="2" Grid.Column="2"><TextBlock Text="Архитектура" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><ComboBox x:Name="ArchitectureBox"><ComboBoxItem Content="x64"/><ComboBoxItem Content="x86"/></ComboBox></StackPanel>
                                 <StackPanel Grid.Row="4"><TextBlock Text="Пароль продавца" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="ClientPasswordBox"/></StackPanel>
                                 <StackPanel Grid.Row="4" Grid.Column="2"><TextBlock Text="Токен ЧЗ" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="TokenBox"/></StackPanel>
-                                <StackPanel Grid.Row="6" Visibility="Collapsed"><TextBlock Text="Пароль RuDesktop" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="RuPasswordBox"/></StackPanel>
+                                <StackPanel Grid.Row="6" Visibility="Collapsed"><TextBlock Text="Пароль RuDesktop (только старые заявки)" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,5"/><TextBox x:Name="RuPasswordBox"/></StackPanel>
                                 <StackPanel Grid.Row="6" Grid.Column="2">
                                     <TextBlock Text="Возможности клиента" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,7"/>
                                     <WrapPanel>
                                         <CheckBox x:Name="With1CCheck" Content="Драйвер 1С для АТОЛ" Margin="0,0,18,8" Visibility="Collapsed"/>
                                         <CheckBox x:Name="BackupCheck" Content="Резервная копия ЛМ" Margin="0,0,18,8"/>
                                         <CheckBox x:Name="RuEnabledCheck" Content="RuDesktop включён" Margin="0,0,18,8"/>
-                                        <CheckBox x:Name="RuAutoPasswordCheck" Content="Предлагать настройку пароля"/>
+                                        <CheckBox x:Name="RuAutoPasswordCheck" Content="Автопредложение пароля (старые версии)"/>
                                     </WrapPanel>
                                 </StackPanel>
                             </Grid>
