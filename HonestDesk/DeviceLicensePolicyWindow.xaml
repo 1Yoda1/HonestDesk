@@ -1,0 +1,34 @@
+<Window x:Class="HonestDesk.DeviceLicensePolicyWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Параметры лицензии устройства" Width="500" Height="620"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Grid Background="#F4F6FB" Margin="24">
+        <StackPanel>
+            <TextBlock Text="Лицензия устройства" FontSize="24" FontWeight="SemiBold"/>
+            <TextBlock Text="Задайте базовые функции и при необходимости отдельный доступ HonestFlow Service для этого ПК."
+                       TextWrapping="Wrap" Foreground="#667085" Margin="0,8,0,18"/>
+            <CheckBox x:Name="ViewCheck" Content="Просмотр состояния и ремонт точки" IsChecked="True" Margin="0,0,0,12"/>
+            <CheckBox x:Name="InstallCheck" Content="Установка и обслуживание точки" IsChecked="True" Margin="0,0,0,16"/>
+            <CheckBox x:Name="ServiceCheck" Content="HonestFlow Service" Margin="0,0,0,8"
+                      Checked="ServiceCheck_Changed" Unchecked="ServiceCheck_Changed"/>
+            <TextBlock Text="Service действует до" Foreground="#344054"/>
+            <DatePicker x:Name="ServiceDatePicker" Margin="0,6,0,8" IsEnabled="False"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                <Button Content="1 месяц" Width="92" Margin="0,0,8,0" Click="ServiceOneMonth_Click"/>
+                <Button Content="3 месяца" Width="92" Margin="0,0,8,0" Click="ServiceThreeMonths_Click"/>
+                <Button Content="12 месяцев" Width="100" Click="ServiceTwelveMonths_Click"/>
+            </StackPanel>
+            <TextBlock Text="Минимальная версия HonestFlow"/>
+            <TextBox x:Name="VersionBox" Text="0.0.0" Margin="0,6,0,14" Padding="8"/>
+            <TextBlock Text="Offline grace, часов"/>
+            <TextBox x:Name="GraceBox" Text="72" Margin="0,6,0,14" Padding="8"/>
+            <TextBlock Text="Срок обычной лицензии, дней"/>
+            <TextBox x:Name="DaysBox" Text="365" Margin="0,6,0,20" Padding="8"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Отмена" Width="100" Height="40" Margin="0,0,10,0" Click="Cancel_Click"/>
+                <Button Content="Выдать лицензию" Width="150" Height="40" Click="Accept_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

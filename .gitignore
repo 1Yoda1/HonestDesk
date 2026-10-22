@@ -2,6 +2,9 @@
 **/bin/
 **/obj/
 build-check/
+publish/
+publish-desk/
+/artifacts/
 *.user
 *.suo
 
@@ -9,3 +12,5 @@ build-check/
 settings.json
 state.json
 honestdesk.log
+
+HonestDesk/Backups/
