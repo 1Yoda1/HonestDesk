@@ -45,6 +45,8 @@
                         </StackPanel>
                     </Button>
                     <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="ConnectionRequestsButton_Click" Margin="0,0,0,8" Content="Подключение Service"/>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
                             Click="DiagnosticsButton_Click" Margin="0,0,0,8">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="▣" FontSize="17" Width="30"/>
@@ -72,6 +74,8 @@
                             <TextBlock Text="Администрирование" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+                    <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
+                            Click="OpenDistributionsButton_Click" Margin="0,8,0,0" Content="Дистрибутивы"/>
                     <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"
                             Click="OpenLicensesButton_Click" Margin="0,8,0,0" Content="Лицензии"/>
                     <Button Style="{StaticResource GhostButton}" HorizontalContentAlignment="Left"

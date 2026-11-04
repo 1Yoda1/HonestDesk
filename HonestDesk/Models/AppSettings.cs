@@ -4,6 +4,7 @@ public sealed class AppSettings
 {
     public string ApiBaseUrl { get; set; } = "https://api.honestflow.ru/";
     public string ProtectedAdminApiKey { get; set; } = "";
+    public string ReleaseSigningKeyPath { get; set; } = "";
     public string RemoteAccessKeyId { get; set; } = "";
     public string ProtectedRemoteAccessPrivateKey { get; set; } = "";
     public string ImapServer { get; set; } = "imap.yandex.ru";

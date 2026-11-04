@@ -17,6 +17,14 @@ public sealed class HonestLicenseAdminApiClient
         _http.Timeout = TimeSpan.FromSeconds(30);
     }
 
+    public Task<IReadOnlyList<AdminConnectionRequest>> GetConnectionRequestsAsync(string? status, CancellationToken token) =>
+        GetListAsync<AdminConnectionRequest>("api/admin/connection-requests" + Query("status", status), token);
+    public Task DeleteConnectionRequestAsync(int id, CancellationToken token) =>
+        SendAsync(HttpMethod.Delete, $"api/admin/connection-requests/{id}", null, token);
+    public Task SetConnectionRequestStatusAsync(int id, string status, string expectedStatus, CancellationToken token) =>
+        SendAsync(HttpMethod.Put, $"api/admin/connection-requests/{id}/status", new { status, expectedStatus }, token);
+
+
     public Task<IReadOnlyList<AdminSupportRequest>> GetSupportRequestsAsync(string? status, CancellationToken token) => GetListAsync<AdminSupportRequest>("api/admin/support-requests" + Query("status", status), token);
     public Task<IReadOnlyList<AdminDiagnosticArchive>> GetDiagnosticArchivesAsync(CancellationToken token) =>
         GetListAsync<AdminDiagnosticArchive>("api/admin/diagnostics", token);
@@ -123,6 +131,26 @@ public sealed class HonestLicenseAdminApiClient
         SendAsync(HttpMethod.Put, $"api/admin/devices/{id}/release", null, token);
     public Task PutVersionAsync(string application, string version, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/versions/{Uri.EscapeDataString(application)}", new { currentVersion = version }, token);
     public Task PutComponentOverrideAsync(string clientId, string component, string? version, CancellationToken token) => SendAsync(HttpMethod.Put, $"api/admin/clients/{Uri.EscapeDataString(clientId)}/component-versions/{Uri.EscapeDataString(component)}", new { requiredVersion = version }, token);
+    public async Task<AdminReleaseUpload> CreateReleaseUploadAsync(
+        string keyId, string manifestBase64, string signatureBase64, CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(HttpMethod.Post,
+            "api/admin/release-uploads",
+            new { keyId, manifestBase64, signatureBase64, useMultipart = true }, token);
+        return JsonConvert.DeserializeObject<AdminReleaseUpload>(await response.Content.ReadAsStringAsync(token))
+            ?? throw new InvalidDataException("HonestLicenseServer returned an empty release upload response.");
+    }
+    public async Task<AdminReleaseUploadPart> CreateReleaseUploadPartAsync(
+        int uploadId, int partNumber, CancellationToken token)
+    {
+        using HttpResponseMessage response = await SendCoreAsync(HttpMethod.Post,
+            $"api/admin/release-uploads/{uploadId}/parts/{partNumber}", null, token);
+        return JsonConvert.DeserializeObject<AdminReleaseUploadPart>(await response.Content.ReadAsStringAsync(token))
+            ?? throw new InvalidDataException("HonestLicenseServer returned an empty release part response.");
+    }
+    public Task CompleteReleaseUploadAsync(
+        int uploadId, IReadOnlyCollection<AdminCompletedReleasePart> parts, CancellationToken token) =>
+        SendAsync(HttpMethod.Post, $"api/admin/release-uploads/{uploadId}/complete", new { parts }, token);
     public Task PutClientIntegrationSettingsAsync(
         string clientId,
         string? identificationCode,
@@ -247,15 +275,44 @@ public sealed class AdminAsset
     public string? DownloadUrl { get; set; }
     public string? YandexPublicKey { get; set; }
     public string? YandexPath { get; set; }
+    public string? ObjectKey { get; set; }
     public string? Sha256 { get; set; }
     public long? SizeBytes { get; set; }
+    public string? ReleaseKeyId { get; set; }
+    public string? ManifestBase64 { get; set; }
+    public string? ReleaseSignatureBase64 { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
     public string EffectiveUrl => !string.IsNullOrWhiteSpace(DownloadUrl) ? DownloadUrl : YandexPublicKey ?? "";
     public bool HasLink => !string.IsNullOrWhiteSpace(EffectiveUrl);
     public string LinkCaption => !string.IsNullOrWhiteSpace(DownloadUrl) ? "Скачать" : "Папка";
+    public string StorageCaption => !string.IsNullOrWhiteSpace(ObjectKey) ? "Cloud.ru" :
+        !string.IsNullOrWhiteSpace(DownloadUrl) ? "Прямая ссылка" : "Яндекс Диск";
+    public string StoragePath => ObjectKey ?? YandexPath ?? DownloadUrl ?? "";
+    public string SignatureCaption => string.IsNullOrWhiteSpace(ReleaseKeyId) ? "Нет" : ReleaseKeyId;
     public string DisplaySize => SizeBytes is > 0 ? $"{SizeBytes.Value / 1024d / 1024d:N1} МБ" : "—";
 }
 public sealed class AdminComponentOverride { public string? Component { get; set; } public string? RequiredVersion { get; set; } }
+public sealed class AdminReleaseUpload
+{
+    public int Id { get; set; }
+    public string Component { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string Architecture { get; set; } = "";
+    public string FileName { get; set; } = "";
+    public long SizeBytes { get; set; }
+    public string Sha256 { get; set; } = "";
+    public long? PartSizeBytes { get; set; }
+    public int? PartCount { get; set; }
+}
+public sealed class AdminReleaseUploadPart
+{
+    public int PartNumber { get; set; }
+    public string UploadUrl { get; set; } = "";
+    public DateTimeOffset UploadUrlExpiresAtUtc { get; set; }
+}
+public sealed record AdminCompletedReleasePart(
+    [property: JsonProperty("partNumber")] int PartNumber,
+    [property: JsonProperty("eTag")] string ETag);
 public sealed class AdminClientIntegrationSettings { public string? ClientId { get; set; } public string? IdentificationCode { get; set; } public string? ChzToken { get; set; } public bool RuDesktopEnabled { get; set; } public bool RuDesktopAutoOfferPasswordSetup { get; set; } public bool IsConfigured { get; set; } }
 public sealed class AdminClientLicensePolicy { public string? ClientId { get; set; } public bool? IsEnabled { get; set; } }
 public sealed class AdminServiceInstallAccessSettings

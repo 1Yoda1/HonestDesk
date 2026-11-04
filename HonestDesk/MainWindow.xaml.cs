@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private FrameworkElement? _adminContent;
     private FrameworkElement? _licenseContent;
     private FrameworkElement? _settingsContent;
+    private readonly ConnectionRequestsView _connectionRequestsView;
     private FrameworkElement? _diagnosticsContent;
     private System.Windows.Controls.DataGrid? _diagnosticsGrid;
     private HelpRequest? _lastNotifiedRequest;
@@ -57,6 +58,7 @@ public partial class MainWindow : Window
         _remoteClientConfigService = new RemoteClientConfigService(_logger);
         _settings = _settingsService.Load();
         _state = _stateService.Load();
+        _connectionRequestsView = new ConnectionRequestsView(CreateApiClient);
         RequestsGrid.ItemsSource = _requests;
         BuildTray();
         ConfigureTimer();
@@ -181,6 +183,7 @@ public partial class MainWindow : Window
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             HonestLicenseAdminApiClient api = CreateApiClient();
+            await _connectionRequestsView.RefreshAsync();
             string? remoteKeyError = null;
             try { await new RemoteAccessKeyService(_settingsService, _settings).EnsurePublishedAsync(api, cts.Token); }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -525,6 +528,12 @@ public partial class MainWindow : Window
 
     private async void CheckButton_Click(object sender, RoutedEventArgs e) => await CheckNowAsync();
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettingsSection();
+    private async void ConnectionRequestsButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowSection("Connections", _connectionRequestsView);
+        await _connectionRequestsView.RefreshAsync();
+    }
+
     private void DashboardButton_Click(object sender, RoutedEventArgs e) => ShowSection("Support", null);
     private async void DiagnosticsButton_Click(object sender, RoutedEventArgs e) =>
         await ShowDiagnosticsSectionAsync();
@@ -664,6 +673,22 @@ public partial class MainWindow : Window
 
     private async void OpenLicensesButton_Click(object sender, RoutedEventArgs e) =>
         await OpenLicensesSafelyAsync();
+
+    private void OpenDistributionsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!EnsureAdminSession()) return;
+            _adminAccess.Audit("Distributions window opened");
+            new DistributionsWindow(_adminAccess, _settings, _settingsService) { Owner = this }.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Opening distributions window", ex);
+            SetStatus("Не удалось открыть дистрибутивы", "#F06B78");
+            ShowWarning("Не удалось открыть окно дистрибутивов. Подробности записаны в журнал.");
+        }
+    }
 
     private async Task OpenLicensesSafelyAsync()
     {
@@ -1015,6 +1040,10 @@ public partial class MainWindow : Window
             case "Licenses":
                 _logger.Info("Startup stage: Protected section restore skipped; operator unlock is required.");
                 ShowSection("Support", null);
+                break;
+            case "Connections":
+                ShowSection("Connections", _connectionRequestsView);
+                await _connectionRequestsView.RefreshAsync();
                 break;
             case "Settings": ShowSettingsSection(); break;
             case "Diagnostics": await ShowDiagnosticsSectionAsync(); break;
