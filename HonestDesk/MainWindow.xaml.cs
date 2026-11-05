@@ -6,7 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using System.Windows.Data;
-using System.Security.Cryptography;
+using HonestDesk.Infrastructure.Diagnostics;
 using WpfBinding = System.Windows.Data.Binding;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfButton = System.Windows.Controls.Button;
@@ -909,23 +909,27 @@ public partial class MainWindow : Window
             if (File.Exists(path))
                 path = Path.Combine(folder,
                     $"{Path.GetFileNameWithoutExtension(safeName)}-{DateTime.Now:yyyyMMdd-HHmmss}{Path.GetExtension(safeName)}");
+            string temporaryPath = path + ".part";
 
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
             using HttpResponseMessage response = await http.GetAsync(
                 download.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             response.EnsureSuccessStatusCode();
-            await using (Stream source = await response.Content.ReadAsStreamAsync(cts.Token))
-            await using (FileStream target = File.Create(path))
-                await source.CopyToAsync(target, cts.Token);
-
-            await using (FileStream verify = File.OpenRead(path))
+            try
             {
-                string actualHash = Convert.ToHexString(await SHA256.HashDataAsync(verify, cts.Token));
-                if (!string.Equals(actualHash, archive.Sha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    File.Delete(path);
-                    throw new InvalidDataException("Контрольная сумма скачанного архива не совпала. Файл удалён.");
-                }
+                await using (Stream source = await response.Content.ReadAsStreamAsync(cts.Token))
+                await using (FileStream target = File.Create(temporaryPath))
+                    await source.CopyToAsync(target, cts.Token);
+
+                await DiagnosticArchiveFileVerifier.VerifyAsync(
+                    temporaryPath, archive.SizeBytes, archive.Sha256, cts.Token);
+                File.Move(temporaryPath, path);
+            }
+            catch
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+                throw;
             }
 
             _logger.Info($"Diagnostic archive downloaded: id={archive.Id}, path={path}");
