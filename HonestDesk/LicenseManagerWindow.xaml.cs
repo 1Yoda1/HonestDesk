@@ -818,6 +818,52 @@ public partial class LicenseManagerWindow : Window
     private void ApplyLicenseButton_Click(object sender, RoutedEventArgs e) => ApplySelected();
     private void AddDeviceButton_Click(object sender, RoutedEventArgs e) =>
         ShowWarning("Устройство добавляется через заявку регистрации и Approve. Локальный Device без записи на HonestLicenseServer не создан.");
+    private async void ServerComponentsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || DevicesGrid.SelectedItem is not LicensedDevice value || SelectedLicense is not { } license) return;
+        SetBusy(true, "Загрузка настроек устройства…");
+        try
+        {
+            HonestLicenseAdminApiClient api = new(_appSettings.ApiBaseUrl,
+                () => DpapiProtector.Unprotect(_appSettings.ProtectedAdminApiKey));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var devices = await api.GetDevicesAsync(license.ClientId, cts.Token);
+            AdminDevice? device = AdminLifecycleVisibility.FindCurrentBoundDevice(devices, license.ClientId, value.DeviceId);
+            if (device is null) throw new InvalidOperationException("Устройство не найдено на сервере.");
+            var check = new System.Windows.Controls.CheckBox
+            {
+                Content = "ЛМ ЧЗ и Контроллер на сервере",
+                IsChecked = device.ComponentsHostedOnServer,
+                Margin = new Thickness(0, 12, 0, 16)
+            };
+            var save = new System.Windows.Controls.Button { Content = "Сохранить", Padding = new Thickness(16, 6, 16, 6) };
+            var panel = new System.Windows.Controls.StackPanel { Margin = new Thickness(20) };
+            panel.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = device.Name + "\nHF исключит эти компоненты из локальных проверок и управления.",
+                TextWrapping = TextWrapping.Wrap
+            });
+            panel.Children.Add(check);
+            panel.Children.Add(save);
+            var dialog = new Window
+            {
+                Owner = this, Title = "Размещение компонентов", Width = 470, SizeToContent = SizeToContent.Height,
+                ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = panel
+            };
+            save.Click += (_, _) => dialog.DialogResult = true;
+            if (dialog.ShowDialog() != true) return;
+            using var saveCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            await api.UpdateDeviceAsync(device.Id, new
+            {
+                name = device.Name, address = device.Address, comment = device.Comment, status = device.Status,
+                componentsHostedOnServer = check.IsChecked == true
+            }, saveCancellation.Token);
+            StatusText.Text = "Размещение компонентов сохранено. Переподключите Service в HF для применения.";
+        }
+        catch (Exception ex) { ShowWarning("Не удалось сохранить размещение компонентов:\n" + ex.Message); }
+        finally { SetBusy(false); }
+    }
+
     private async void DeleteDeviceButton_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
